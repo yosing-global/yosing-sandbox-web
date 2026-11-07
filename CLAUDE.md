@@ -65,7 +65,7 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 
 - 要求・応答は JSON、項目名は lowerCamelCase、日時は ISO 8601 の UTC。
 - セッション ID は `Authorization: Bearer <sessionId>` で渡す。仮認証 JWT は本文の `loginToken` で渡す（中身は見ない。そのまま渡す）。
-- 期限：仮登録10分、仮認証 JWT 5分、セッションは最終操作から30日（`GET /v1/me` のたびに延びる）・発行から90日の早い方。
+- 期限：仮登録10分、仮認証 JWT 5分、セッションは最終操作から12時間（`GET /v1/me` のたびに延びる）・発行から7日の早い方。
 - 入力の規則：`loginId` は3〜32文字の英字・数字・`_`・`-`（大文字は API が小文字にそろえる）、`password` は12〜64文字の表示できる ASCII、`code` は数字6桁。画面でも同じ規則で先に確かめる（最終的な判定は API）。
 - エラーは Problem Details に `code` が付く。処理は `code` で分け、`detail` の文言には頼らない。
 
@@ -92,7 +92,7 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 | セッション | API の `sessionId` | `HttpOnly`・`Secure`・`SameSite=Lax`・`Path=/`・`Domain` なし | API が返す `sessionExpiresAt`（発行時と、`GET /v1/me` のたびに延ばす） |
 | 仮認証 | API の `loginToken` | `HttpOnly`・`Secure`・`SameSite=Lax`・`Domain` なし | 5分（API の `expiresAt`） |
 
-- セッションの Cookie の期限は、サーバー側のセッションの期限と同じにする（`Expires` に API の `sessionExpiresAt` をそのまま入れる）。登録の確定・ログインの確定で設定し、`GET /v1/me` に成功するたびに、応答の `sessionExpiresAt` で設定し直す。期限の計算（30日・90日）は BFF でしない（API が正）。
+- セッションの Cookie の期限は、サーバー側のセッションの期限と同じにする（`Expires` に API の `sessionExpiresAt` をそのまま入れる）。登録の確定・ログインの確定で設定し、`GET /v1/me` に成功するたびに、応答の `sessionExpiresAt` で設定し直す。期限の計算（12時間・7日）は BFF でしない（API が正）。
 - Cookie の名前・仮認証の Cookie の `Path` は、実装のときに決める。
 - ログアウトは、API でセッションを消してから Cookie を消す（API が失敗しても、Cookie は消す）。
 - 認証の前の値を引き継がない：ログインの確定・登録の確定に成功したら、仮認証の Cookie を消して、新しいセッションの Cookie を設定する。
@@ -113,7 +113,8 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 
 ### API との境目で決めたこと
 
-- **`GET /v1/me` の応答に `sessionExpiresAt` を足す**（2026-11-07 に決定。api の変更はまだ）：セッションは `GET /v1/me` のたびに延びるため、BFF が新しい期限を受け取って Cookie を延ばせるようにする。api の PR（Notion の 4.2・API の Wiki も一緒に直す）が先に要る。
+- **`GET /v1/me` の応答に `sessionExpiresAt` を足す**（2026-11-07 に決定。api のブランチ `feat/me-session-expires-at` で対応。マージされるまでは、api の develop には無い）：セッションは `GET /v1/me` のたびに延びるため、BFF が新しい期限を受け取って Cookie を延ばせるようにする。
+- **セッションの期限を、最終操作から12時間・発行から7日にする**（2026-11-07 に決定。同じ api のブランチで対応）：二要素認証で確かめ直す機会を減らしすぎないため。
 - **web の PR 環境は `dev-api` を呼ぶ**（`dev-api.sandbox.internal:8080`）。web の PR 環境で登録したユーザーは、dev のテーブルに残る。
 
 ## 環境
