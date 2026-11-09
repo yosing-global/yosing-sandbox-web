@@ -6,7 +6,8 @@ sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）�
 
 - Next.js の土台ができた（2026-11-07。ヘルスチェック・静的チェック・単体テスト・Dockerfile）。画面・BFF・CI（`.github/workflows`・`deploy/`）はまだ無い。
 - E2E の設計は Notion の「6. テスト仕様」の「yosing-sandbox-e2e E2Eテスト」。
-- API は全部のエンドポイントができている（`yosing-sandbox-api`。仕様はその GitHub Wiki と Notion の「4.2 API設計」）。
+- API は全部のエンドポイントができている（`yosing-sandbox-api`。仕様はその GitHub Wiki と Notion の「4.3 API設計」）。
+- 画面の URL と BFF の操作は、Notion の「4.2 画面のURLとBFF」で決めた（2026-11-09）。要点は下の「画面の URL と BFF」。
 - 画面の UI/UX は、Claude Code がキャンバス（claude.ai の Artifact「ログイン画面レイアウト案」 https://claude.ai/artifact/QHTRJ4g4wXWgbEoMo3GGEn ）に描いて決めた（2026-11-07）。要点は下の「画面（UI/UX）」。結果は Notion の「4.1 UI/UX設計」にも残す。
 - nonprod のインフラ（ECR の `sandbox/web`、CI ロール、タスクロール、SG、ロググループ）は準備済み。stg / prod のインフラはまだ無い（最後にまとめて作る）。
 - 作業の順番：web → E2E（`yosing-sandbox-e2e`、Playwright）→ stg / prod のインフラと各アプリの CI の仕上げ。リポジトリ・Wiki の一般公開は、全部を確かめた後の最後。
@@ -71,7 +72,7 @@ sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）�
 
 ## 設計
 
-Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/UX設計」「4.2 API設計」（Notion MCP で検索できる）。API の外部から見た振る舞いは、`yosing-sandbox-api` の GitHub Wiki（`../yosing-sandbox-api.wiki`）にもまとめてある。
+Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/UX設計」「4.2 画面のURLとBFF」「4.3 API設計」「4.4 DB設計」（Notion MCP で検索できる）。API の外部から見た振る舞いは、`yosing-sandbox-api` の GitHub Wiki（`../yosing-sandbox-api.wiki`）にもまとめてある。
 
 ### 構成
 
@@ -83,18 +84,25 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 - API の呼び出しは、すべてサーバー側（Route Handler・Server Action・Server Component）で行う。API の URL は環境変数で渡す（名前は実装のときに決める。例：`API_BASE_URL`）。
 - web から API への通信は、Cloud Map の名前（`<env>-api.sandbox.internal:8080`）で直接つなぐ（内部 ALB は無い）。
 
-### 画面と API
+### 画面の URL と BFF（詳細は Notion の「4.2 画面のURLとBFF」が正）
 
-| 画面 | 呼ぶ API | 成功したら |
-| :--- | :--- | :--- |
-| 登録（ログイン ID・パスワード） | `POST /v1/registrations` | QR コードとコード入力の画面へ |
-| 登録の確定（QR コード・6桁） | `POST /v1/registrations/{registrationId}/verify` | セッションの Cookie を設定して、ダッシュボードへ |
-| ログイン（ログイン ID・パスワード） | `POST /v1/logins` | 仮認証 JWT を Cookie に保存して、6桁の入力へ |
-| ログインの確定（6桁） | `POST /v1/logins/verify` | 仮認証の Cookie を消し、セッションの Cookie を設定して、ダッシュボードへ |
-| ダッシュボード | `GET /v1/me` | ログイン ID・登録した日時を表示し、セッションの Cookie の期限を延ばす |
-| ログアウト | `DELETE /v1/sessions/current` | セッションの Cookie を消して、ログイン画面へ |
+| URL | 画面 | BFF の操作（種類） | 呼ぶ API | 成功したら |
+| :--- | :--- | :--- | :--- | :--- |
+| `/register` | 新規登録（ステップ1） | `startRegistration`（Server Action） | `POST /v1/registrations` | 登録 ID・QR コード（SVG）・キーをブラウザーの store に入れ、`/register/setup` へ（画面の中だけの移動） |
+| `/register/setup` | 新規登録（ステップ2） | `verifyRegistration`（Server Action） | `POST /v1/registrations/{registrationId}/verify` | セッションの Cookie を設定して、`/dashboard` へ |
+| `/login` | ログイン（ステップ1） | `startLogin`（Server Action） | `POST /v1/logins` | 仮認証の Cookie を設定して、`/login/verify` へ |
+| `/login/verify` | ログイン（ステップ2） | `verifyLogin`（Server Action） | `POST /v1/logins/verify` | 仮認証の Cookie を消し、セッションの Cookie を設定して、`/dashboard` へ |
+| `/dashboard` | ダッシュボード | proxy（開く前） | `GET /v1/me` | セッションの Cookie を延ばし、ログイン ID・登録した日時を画面に渡す |
+| `/dashboard` | ダッシュボード | `logout`（Server Action） | `DELETE /v1/sessions/current` | セッションの Cookie を消して、`/login` へ |
+| `/` | （画面なし） | ― | ― | ログイン中なら `/dashboard`、そうでなければ `/login` |
+| `/api/health` | （ヘルスチェック） | Route Handler | ― | `{"status":"UP"}` |
 
-- 登録の確定の画面に、登録 ID（`registrationId`）をどう渡すか（URL・Cookie 等）は、実装のときに決める。登録 ID だけでは何もできない（コードが要る）が、10分で切れる。
+- BFF の入口：フォームの操作は Server Action（決まった URL は無く、画面の URL への POST）。画面を開く前の振り分けと Cookie の延長は proxy（旧 middleware）。画面から呼ばない入口だけ Route Handler。
+- Server Component（画面の表示）の中では Cookie を書き換えられない（Next.js の決まり）。そのため、`GET /v1/me` のたびの Cookie の延長と、無効なセッションの Cookie の削除は、`/dashboard` を開く前の proxy で行う。
+- **新規登録の設定の値はブラウザーのメモリに持つ**：API には設定 URI（`otpauthUri`）を取り直すエンドポイントが無い（登録 ID だけで取り直せると秘密情報が漏れるため）。そのため、`startRegistration` が返す登録 ID・QR コード・キーを React の store（メモリ）に入れ、`/register/setup` は store から表示する。`sessionStorage` 等には入れない（秘密情報を残さないため）。リロード・URL の直打ちで store が空なら `/register` に戻す（登録をやり直す）。設定 URI そのものはブラウザーに渡さない（BFF で QR コードの SVG にする）。
+- 未ログインの人向けの画面（`/login`・`/register` 等）は、セッションの Cookie があるかだけで「ログイン中」を判断して `/dashboard` に移す（API には問い合わせない）。
+- 別の画面に移したうえでお知らせを出すときは、URL に理由を付ける（`/login?notice=expired`・`retry-later`、`/register?notice=restart`・`taken`）。決まった値だけを受け付ける。リロードしても同じお知らせが出続けるが、許容する。
+- 失敗は「種類」を返し、文言は画面の側で決める（文言は 4.1 が正）。登録の確定で `LOGIN_ID_TAKEN` が出て `/register` に戻ったときは、ログイン ID を入力欄に残さない。
 
 ### 画面（UI/UX）
 
@@ -144,7 +152,8 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 | 仮認証 | API の `loginToken` | `HttpOnly`・`Secure`・`SameSite=Lax`・`Domain` なし | 5分（API の `expiresAt`） |
 
 - セッションの Cookie の期限は、サーバー側のセッションの期限と同じにする（`Expires` に API の `sessionExpiresAt` をそのまま入れる）。登録の確定・ログインの確定で設定し、`GET /v1/me` に成功するたびに、応答の `sessionExpiresAt` で設定し直す。期限の計算（12時間・7日）は BFF でしない（API が正）。
-- Cookie の名前・仮認証の Cookie の `Path` は、実装のときに決める。
+- 名前：セッションは `__Host-session`（`Path=/`）、仮認証は `__Secure-login`（`Path=/login`）。先頭の `__Host-` / `__Secure-` は、ブラウザーに属性を守らせるための印（`__Host-` は `Secure`・`Path=/`・`Domain` なしでないと保存されない。仮認証は `Path=/login` に絞るため `__Secure-`）。名前にプロダクト名は入れない（Cookie はホスト名ごとに分かれ、環境ごとにホスト名が違うため）。
+- Cookie はポート番号では分かれないため、手元の `localhost` では、別のアプリが同じ名前を使うとぶつかることがある（手元だけの話。困ったらブラウザーの Cookie を消す）。
 - ログアウトは、API でセッションを消してから Cookie を消す（API が失敗しても、Cookie は消す）。
 - 認証の前の値を引き継がない：ログインの確定・登録の確定に成功したら、仮認証の Cookie を消して、新しいセッションの Cookie を設定する。
 - 手元（`http://localhost`）では、主なブラウザーは `localhost` を安全な接続として扱うため、`Secure` の Cookie も使える。
@@ -152,7 +161,7 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 ### CSRF
 
 - 状態を変える要求（登録・ログイン・ログアウト）には CSRF の対策をする（`SameSite=Lax` に加えて）。
-- 方法は実装のときに決める。候補：Server Action（Next.js が `Origin` を確かめる）、Route Handler なら `Origin` ヘッダーが自分のオリジンかを確かめる。
+- 状態を変える操作は、すべて Server Action にする（Next.js が `Origin` を確かめる）。Route Handler で状態を変える操作を作る場合は、`Origin` ヘッダーが自分のオリジンかを確かめる。
 - 状態を変える処理を `GET` にしない。
 
 ### 機密情報の扱い
@@ -213,4 +222,4 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 - やり取り・コードのコメント・ドキュメントは日本語。
 - AWS のリソースを変える操作（作成・削除）は、CI 経由かユーザーの確認のうえで行う。
 - Norton の TLS 検査で、Claude のシェルからの通信（npm のパッケージのダウンロード等）が証明書のエラーで失敗することがある。その場合は、ユーザーに PowerShell で実行してもらうコマンドを示す。
-- API の仕様を変える必要が出たら、web で回避せず、api のリポジトリで直す（API の Wiki と Notion の 4.2 も一緒に直す）。
+- API の仕様を変える必要が出たら、web で回避せず、api のリポジトリで直す（API の Wiki と Notion の 4.3 も一緒に直す）。
