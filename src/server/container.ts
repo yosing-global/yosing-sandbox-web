@@ -1,6 +1,9 @@
 import "server-only";
+import { startLogin } from "@/server/application/login/start-login";
+import { verifyLogin } from "@/server/application/login/verify-login";
 import { startRegistration } from "@/server/application/registration/start-registration";
 import { verifyRegistration } from "@/server/application/registration/verify-registration";
+import { loginApiClient } from "@/server/infrastructure/api/login-api-client";
 import { registrationApiClient } from "@/server/infrastructure/api/registration-api-client";
 import { otpSetupRenderer } from "@/server/infrastructure/qrcode/otp-setup-renderer";
 
@@ -13,4 +16,6 @@ export const usecases = {
     otpSetupRenderer,
   }),
   verifyRegistration: verifyRegistration({ registrationApi: registrationApiClient }),
+  startLogin: startLogin({ loginApi: loginApiClient }),
+  verifyLogin: verifyLogin({ loginApi: loginApiClient }),
 };

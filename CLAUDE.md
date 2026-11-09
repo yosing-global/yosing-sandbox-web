@@ -4,7 +4,7 @@ sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）�
 
 ## 状況（2026-11-07 時点）
 
-- Next.js の土台ができた（2026-11-07。ヘルスチェック・静的チェック・単体テスト・Dockerfile）。CI・デプロイ（`.github/workflows`・`deploy/`）を作った（2026-11-09。最初の PR で動作を確かめる）。画面・BFF の土台（shadcn/ui・Storybook・Zod・pino、層の骨組みと ESLint の制限、API の呼び出しの共通部分）を作った（2026-11-09）。新規登録の画面（`/register`・`/register/setup`）を作った（2026-11-09。登録後の `/dashboard` はまだ無い）。作る順番：新規登録 → ログイン → ダッシュボード・ログアウト → エラーの画面（新規登録で作ったユーザーで、ログインを PR 環境で確かめるため）。
+- Next.js の土台ができた（2026-11-07。ヘルスチェック・静的チェック・単体テスト・Dockerfile）。CI・デプロイ（`.github/workflows`・`deploy/`）を作った（2026-11-09。最初の PR で動作を確かめる）。画面・BFF の土台（shadcn/ui・Storybook・Zod・pino、層の骨組みと ESLint の制限、API の呼び出しの共通部分）を作った（2026-11-09）。新規登録の画面（`/register`・`/register/setup`）を作った（2026-11-09）。ログインの画面（`/login`・`/login/verify`）と proxy（`src/proxy.ts`。今は `/login/verify` の振り分けだけ）を作った（2026-11-09。登録・ログインの後の `/dashboard` はまだ無い）。作る順番：新規登録 → ログイン → ダッシュボード・ログアウト → エラーの画面（新規登録で作ったユーザーで、ログインを PR 環境で確かめるため）。
 - E2E の設計は Notion の「6. テスト仕様」の「yosing-sandbox-e2e E2Eテスト」。
 - API は全部のエンドポイントができている（`yosing-sandbox-api`。仕様はその GitHub Wiki と Notion の「4.3 API設計」）。
 - 画面の URL と BFF の操作は、Notion の「4.2 画面のURLとBFF」で決めた（2026-11-09）。要点は下の「画面の URL と BFF」。
@@ -115,6 +115,7 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 | `/api/health` | （ヘルスチェック） | Route Handler | ― | `{"status":"UP"}` |
 
 - BFF の入口：フォームの操作は Server Action（決まった URL は無く、画面の URL への POST）。画面を開く前の振り分けと Cookie の延長は proxy（旧 middleware）。画面から呼ばない入口だけ Route Handler。
+- proxy は画面を開くとき（GET・HEAD）だけ振り分ける。Server Action（POST）を移すと画面が応答を読めなくなるため、POST の Cookie の確認はコントローラーで行う（例：`verifyLogin` は仮認証の Cookie が無ければ `/login?notice=expired`）。
 - Server Component（画面の表示）の中では Cookie を書き換えられない（Next.js の決まり）。そのため、`GET /v1/me` のたびの Cookie の延長と、無効なセッションの Cookie の削除は、`/dashboard` を開く前の proxy で行う。
 - **新規登録の設定の値はブラウザーのメモリに持つ**：API には設定 URI（`otpauthUri`）を取り直すエンドポイントが無い（登録 ID だけで取り直せると秘密情報が漏れるため）。そのため、`startRegistration` が返す登録 ID・QR コード・キーを React の store（メモリ）に入れ、`/register/setup` は store から表示する。`sessionStorage` 等には入れない（秘密情報を残さないため）。リロード・URL の直打ちで store が空なら `/register` に戻す（登録をやり直す）。設定 URI そのものはブラウザーに渡さない（BFF で QR コードの SVG にする）。
 - 未ログインの人向けの画面（`/login`・`/register` 等）は、セッションの Cookie があるかだけで「ログイン中」を判断して `/dashboard` に移す（API には問い合わせない）。

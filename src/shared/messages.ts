@@ -21,4 +21,9 @@ export const NOTICE_MESSAGES = {
   loginIdTaken: "このログイン ID は使われています。別の ID にしてください。",
   registrationRestart: "登録を完了できませんでした。最初からやり直してください。",
   otpInvalid: "コードが違います。もう一度入力してください。",
+  invalidCredentials: "ログイン ID かパスワードが違います。",
+  /** ロックの後（「ロック」「15分」とは書かない） */
+  retryLater: "しばらく時間をおいてから、もう一度ログインしてください。",
+  /** セッション切れ・仮認証の期限切れ（同じ文言。青） */
+  loginExpired: "ログインの有効期限が切れました。もう一度ログインしてください。",
 } as const;
