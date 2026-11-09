@@ -1,6 +1,7 @@
 # イメージに入れないもの（ビルドに要るのは package*.json・設定・src・public だけ）
 .git
 .github
+deploy
 .next
 node_modules
 coverage

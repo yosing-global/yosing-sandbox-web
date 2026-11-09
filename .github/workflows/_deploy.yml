@@ -1,0 +1,181 @@
+name: deploy
+
+# 共通（呼ばれる側）：1つの環境へのデプロイ（Cloud Map のサービス・稼働時間のスケジュールを含む）と、ヘルスチェック
+#   呼ぶ側（pr.yml・develop.yml）のジョブで permissions（contents: read、id-token: write）を渡す
+on:
+  workflow_call:
+    inputs:
+      app_env:
+        description: アプリの環境（dev / test / pr<番号>）。サービス・タスク定義・ログ・URL の名前に使う
+        type: string
+        required: true
+      api_env:
+        description: 呼ぶ API の環境（dev / test。PR 環境は dev-api を呼ぶ）
+        type: string
+        required: true
+      image_tag:
+        description: デプロイするイメージのタグ（コミットのハッシュ）
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ap-northeast-1
+  ECR_REPOSITORY: sandbox/web
+  APP_ENV: ${{ inputs.app_env }}
+  API_ENV: ${{ inputs.api_env }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # ecspresso の差分の表示等で、ロールの ARN・イメージの URL がログに出るため伏せる
+      - name: 値の伏せ字
+        env:
+          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+        run: |
+          echo "::add-mask::${AWS_ROLE_ARN}"
+          echo "::add-mask::${ECR_REGISTRY}"
+          echo "::add-mask::${ECR_REGISTRY%%.*}"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      - uses: kayac/ecspresso@aff803a87548687aa8e6aa0fdc45ea8f00b6fbef # v2.8.7
+        with:
+          version: v2.8.7
+
+      - name: 設定値の取得（SSM パラメータ）
+        run: |
+          get() { aws ssm get-parameter --name "$1" --query Parameter.Value --output text; }
+          echo "ECS_CLUSTER=$(get /products/sandbox/ecs/cluster-name)" >> "$GITHUB_ENV"
+          echo "NAMESPACE_ID=$(get /products/sandbox/cloud-map/namespace-id)" >> "$GITHUB_ENV"
+
+      # リバースプロキシが <アプリの環境>-web.sandbox.internal で解決するための名前（無ければ作る）
+      - name: Cloud Map のサービス
+        run: |
+          name="${APP_ENV}-web"
+          arn=$(aws servicediscovery list-services \
+            --filters "Name=NAMESPACE_ID,Values=${NAMESPACE_ID},Condition=EQ" \
+            --query "Services[?Name=='${name}'].Arn | [0]" --output text)
+          if [ -z "${arn}" ] || [ "${arn}" = "None" ]; then
+            arn=$(aws servicediscovery create-service --name "${name}" --namespace-id "${NAMESPACE_ID}" \
+              --dns-config "RoutingPolicy=MULTIVALUE,DnsRecords=[{Type=A,TTL=10}]" \
+              --health-check-custom-config FailureThreshold=1 \
+              --query Service.Arn --output text)
+            echo "作成した：${name}"
+          fi
+          echo "CLOUD_MAP_SERVICE_ARN=${arn}" >> "$GITHUB_ENV"
+
+      # サービスが無ければ作る。タスクが起動し、デプロイが終わるまで待つ
+      #   --tasks 1：稼働時間の外（スケジュールで 0 になっている）にデプロイしても起動させる（次の 1:00 に 0 に戻る）
+      - name: デプロイ
+        env:
+          IMAGE: ${{ vars.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ inputs.image_tag }}
+        run: ecspresso deploy --config deploy/ecspresso.jsonnet --tasks 1
+
+      # 稼働時間（9:00〜翌 1:00、日本時間）。それ以外はタスクを 0 にする
+      - name: 稼働時間のスケジュール
+        run: |
+          target=(--service-namespace ecs --scalable-dimension ecs:service:DesiredCount
+            --resource-id "service/${ECS_CLUSTER}/${APP_ENV}-web")
+          aws application-autoscaling register-scalable-target "${target[@]}" --min-capacity 0 --max-capacity 1
+          aws application-autoscaling put-scheduled-action "${target[@]}" \
+            --scheduled-action-name "${APP_ENV}-web-start" \
+            --schedule "cron(0 9 * * ? *)" --timezone Asia/Tokyo \
+            --scalable-target-action MinCapacity=1,MaxCapacity=1
+          aws application-autoscaling put-scheduled-action "${target[@]}" \
+            --scheduled-action-name "${APP_ENV}-web-stop" \
+            --schedule "cron(0 1 * * ? *)" --timezone Asia/Tokyo \
+            --scalable-target-action MinCapacity=0,MaxCapacity=0
+
+  # ヘルスチェック。手元からつなぐときと同じ経路（SSM のポートフォワーディング → リバースプロキシ → Cloud Map → web）で確かめる
+  verify:
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      # Session Manager のプラグイン（バージョンとチェックサムを固定する）
+      SSM_PLUGIN_VERSION: 1.2.896.0
+      SSM_PLUGIN_SHA256: 53f51fcc67314a4bf85888a38a3967cd41f8d0f28a60a9469a63acf935ba713e
+    steps:
+      - name: 値の伏せ字
+        env:
+          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+        run: |
+          echo "::add-mask::${AWS_ROLE_ARN}"
+          echo "::add-mask::${ECR_REGISTRY}"
+          echo "::add-mask::${ECR_REGISTRY%%.*}"
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: Session Manager のプラグインの導入
+        run: |
+          curl --fail --silent --show-error --location --output /tmp/session-manager-plugin.deb \
+            "https://s3.amazonaws.com/session-manager-downloads/plugin/${SSM_PLUGIN_VERSION}/ubuntu_64bit/session-manager-plugin.deb"
+          echo "${SSM_PLUGIN_SHA256}  /tmp/session-manager-plugin.deb" | sha256sum --check
+          sudo dpkg --install /tmp/session-manager-plugin.deb
+
+      # リバースプロキシ（NAT インスタンスに同居）の 443 を、ランナーの 8090 につなぐ
+      #   インスタンス ID は作り直すと変わるため、Name タグで探す
+      - name: ポートフォワーディングの開始
+        run: |
+          id=$(aws ec2 describe-instances \
+            --filters Name=tag:Name,Values=nonprod-nat-ec2 Name=instance-state-name,Values=running \
+            --query 'Reservations[0].Instances[0].InstanceId' --output text)
+          if [ -z "${id}" ] || [ "${id}" = "None" ]; then
+            echo "リバースプロキシ（nonprod-nat-ec2）が起動していない"
+            exit 1
+          fi
+          nohup aws ssm start-session --target "${id}" \
+            --document-name AWS-StartPortForwardingSession \
+            --parameters portNumber=443,localPortNumber=8090 > /tmp/ssm-session.log 2>&1 &
+          for i in $(seq 1 30); do
+            if grep --quiet 'Waiting for connections' /tmp/ssm-session.log; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat /tmp/ssm-session.log
+          exit 1
+
+      # デプロイの直後は、リバースプロキシが新しいタスクの IP を引くまで（DNS の TTL）少しかかるため、やり直しながら待つ
+      #   /healthz はリバースプロキシ（NGINX）が先に応答するため、アプリの /api/health を見る（API には問い合わせない）
+      - name: ヘルスチェック
+        run: |
+          url="https://${APP_ENV}.local.sandbox.yosing.net:8090/api/health"
+          for i in $(seq 1 24); do
+            body=$(curl --silent --show-error --max-time 10 "${url}" || true)
+            if echo "${body}" | grep --quiet '"status":"UP"'; then
+              echo "${url} → ${body}"
+              exit 0
+            fi
+            echo "待機中（${i}）：${body}"
+            sleep 5
+          done
+          echo "ヘルスチェックに失敗した：${url}"
+          exit 1
+
+      - name: ポートフォワーディングのログ
+        if: always()
+        run: cat /tmp/ssm-session.log || true

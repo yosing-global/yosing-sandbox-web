@@ -4,7 +4,7 @@ sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）�
 
 ## 状況（2026-11-07 時点）
 
-- Next.js の土台ができた（2026-11-07。ヘルスチェック・静的チェック・単体テスト・Dockerfile）。画面・BFF・CI（`.github/workflows`・`deploy/`）はまだ無い。
+- Next.js の土台ができた（2026-11-07。ヘルスチェック・静的チェック・単体テスト・Dockerfile）。CI・デプロイ（`.github/workflows`・`deploy/`）を作った（2026-11-09。最初の PR で動作を確かめる）。画面・BFF はまだ無い。
 - E2E の設計は Notion の「6. テスト仕様」の「yosing-sandbox-e2e E2Eテスト」。
 - API は全部のエンドポイントができている（`yosing-sandbox-api`。仕様はその GitHub Wiki と Notion の「4.3 API設計」）。
 - 画面の URL と BFF の操作は、Notion の「4.2 画面のURLとBFF」で決めた（2026-11-09）。要点は下の「画面の URL と BFF」。
@@ -197,17 +197,30 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
   - prod を作るときの順番：本体を作る → 確かめる → 行き先を ALB にする（CloudFront の反映に数分かかる）。メンテナンス中は WAF を外してよい。
   - メンテナンスのページは Next.js ではなく、1枚の静的な HTML（見た目はキャンバスの「メンテナンス中」）。Terraform で S3 に置く（本リポジトリでは Terraform を使わないため、`aws-infra-env` に置く）。
 
-## CI・デプロイ（api と同じ作りにする）
+## CI・デプロイ（api と同じ作り）
 
-`../yosing-sandbox-api` の `.github/workflows`・`deploy/`・CLAUDE.md の「nonprod へのデプロイ」を手本にする。
+`../yosing-sandbox-api` の `.github/workflows`・`deploy/`・CLAUDE.md の「nonprod へのデプロイ」を手本にした。手順を直すときは、api とそろえるかも考える。
 
-- ワークフロー：契機ごとのファイル（`pr.yml`・`develop.yml`・`pr-cleanup.yml`）が、共通の手順（`_build.yml`・`_deploy.yml`）を呼ぶ。ジョブは `check → image → deploy → verify` の順。E2E ができたら、`e2e` のジョブを後ろに足す。
+- ワークフロー：契機ごとのファイルが、共通の手順（ファイル名の先頭が `_`）を呼ぶ。手順を直すときは `_build.yml` / `_deploy.yml` の1か所だけを直す。E2E ができたら、`e2e` のジョブを後ろに足す。
+
+| ファイル | 契機 | 内容 |
+| :--- | :--- | :--- |
+| `pr.yml` | PR（作成・更新） | `_build` → `_deploy`（`pr<番号>`、`dev-api` を呼ぶ）→ PR へのコメント |
+| `develop.yml` | develop へのマージ | `_build` → `_deploy`（`dev`）と `_deploy`（`test`）を並べて動かす |
+| `pr-cleanup.yml` | PR を閉じたとき | PR 環境の削除（ECS のサービス・Cloud Map のサービス・稼働時間のスケジュール） |
+| `_build.yml` | 呼ばれる側 | `check`（`npm run check`・`npm run build`）→ `image`（Dockerfile で arm64 のイメージを作って push。タグを返す） |
+| `_deploy.yml` | 呼ばれる側 | 1つの環境（入力：`app_env`・`api_env`・`image_tag`）への `deploy` → `verify`（`https://<env>.local.sandbox.yosing.net:8090/api/health` が `UP` になるまで待つ） |
+
+  - `concurrency`：`pr.yml` と `pr-cleanup.yml` は `pr-<番号>` のグループ（新しい実行が古い実行を止める）。`develop.yml` は止めずに順番に流す。
+  - PR の Conversation に、PR 環境の URL をコメントで出す（`.github/scripts/pr-env-comment.sh`。api と同じもの）。
+- タスク定義の環境変数：`APP_ENV`（`dev` / `test` / `pr<番号>`）、`API_BASE_URL`（`http://<API_ENV>-api.sandbox.internal:8080`。`API_ENV` は dev / test、PR 環境は dev）。web のタスクロールはアプリの環境で共有するため、api の `ROLE_ENV` に当たるものは無い。
+- タスクのサイズ：0.25 vCPU / 0.5GB（Fargate の最小。足りなければ上げる）。
 - AWS への認証は GitHub の OIDC。CI ロールは NonProd の `github-actions-sandbox-web-role`（引き受けられるのは `pull_request` と develop ブランチ）。ジョブに `environment:` を付けない（OIDC の `sub` が変わり、信頼ポリシーに合わなくなる）。
 - アカウント ID・ロールの ARN・ECR の URL はファイルに書かず、GitHub の Variables（`AWS_ROLE_ARN`・`ECR_REGISTRY`）に置き、ワークフローの最初に `::add-mask::` で伏せる。
 - デプロイは ecspresso。値は SSM パラメータから読む（`/products/sandbox/ecs/*`、`/products/sandbox/cloud-map/namespace-id`、`/products/sandbox/web/task-role-arn`、`/products/sandbox/web/security-group-id`、`/products/sandbox/web/log-group-name`、`/infra-env/network/private-subnet-ids`）。
 - 名前：ECS のサービス・Cloud Map のサービスは `<env>-web`、タスク定義のファミリーは `sandbox-<env>-web`、ロググループは `/sandbox/nonprod/web`（ログストリームの先頭を `<env>/`）。
 - イメージは1コミットにつき1つ。環境の違いはタスク定義の環境変数だけ（ビルドの時に環境ごとの値を埋め込まない。Next.js の `NEXT_PUBLIC_*` に環境ごとの値を入れない）。
-- イメージは linux/arm64。x86 のランナーでエミュレーションなしに作れる形にする（api の Dockerfile は `--platform=$BUILDPLATFORM` で層に分ける段を動かしている。Next.js では、ビルドの段を `$BUILDPLATFORM` で動かし、実行の段だけ arm64 にする形を検討する）。
+- イメージは linux/arm64。Dockerfile のビルドの段を `$BUILDPLATFORM`（x86 のランナー）で動かし、実行の段だけ arm64 にする（エミュレーションしない）。CI の `image` のジョブも、この Dockerfile でビルドする（手元と同じ作り方）。
 - CI で AccessDenied が出たら、CI ロールの権限（`aws-infra-env` の `products/sandbox/nonprod/iam.tf`）を直す。
 
 ## git
