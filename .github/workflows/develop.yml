@@ -1,0 +1,46 @@
+name: develop
+
+# develop へのマージ：ビルド（イメージの push）→ dev と test へのデプロイ・ヘルスチェック（並べて動かす）
+#   dev は dev-api を、test は test-api を呼ぶ
+#   E2E ができたら、deploy-test の後ろに e2e のジョブ（test に向けて）を足す
+on:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: read
+
+# 止めずに順番に流す（デプロイを途中で止めない。待っている実行は最新の1つだけ残る）
+concurrency:
+  group: develop
+  cancel-in-progress: false
+
+jobs:
+  build:
+    uses: ./.github/workflows/_build.yml
+    permissions:
+      contents: read
+      id-token: write
+
+  deploy-dev:
+    needs: build
+    uses: ./.github/workflows/_deploy.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      app_env: dev
+      api_env: dev
+      image_tag: ${{ needs.build.outputs.image_tag }}
+
+  deploy-test:
+    needs: build
+    uses: ./.github/workflows/_deploy.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      app_env: test
+      api_env: test
+      image_tag: ${{ needs.build.outputs.image_tag }}

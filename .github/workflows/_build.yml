@@ -1,0 +1,101 @@
+name: build
+
+# 共通（呼ばれる側）：静的チェック・単体テスト・ビルドの確認と、arm64 のイメージの ECR への push
+#   呼ぶ側（pr.yml・develop.yml）のジョブで permissions（contents: read、id-token: write）を渡す
+on:
+  workflow_call:
+    inputs:
+      push_image:
+        description: イメージを作って push するか（フォークからの PR では AWS に入れないため false にする）
+        type: boolean
+        default: true
+    outputs:
+      image_tag:
+        description: push したイメージのタグ（コミットのハッシュ）
+        value: ${{ jobs.image.outputs.tag }}
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ap-northeast-1
+  ECR_REPOSITORY: sandbox/web
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: 依存の導入
+        run: npm ci --no-audit --no-fund
+
+      # 整形の確認・ESLint・型チェック・単体テスト
+      - name: 静的チェック・単体テスト
+        run: npm run check
+
+      # イメージの中でもビルドするが、フォークからの PR（イメージを作らない）でもビルドが通るかを確かめる
+      - name: ビルド
+        run: npm run build
+
+  image:
+    needs: check
+    if: inputs.push_image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      # 公開リポジトリでは Actions のログも公開されるため、アカウント ID・ロールの ARN・レジストリをログに出さない
+      - name: 値の伏せ字
+        env:
+          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+        run: |
+          echo "::add-mask::${AWS_ROLE_ARN}"
+          echo "::add-mask::${ECR_REGISTRY}"
+          echo "::add-mask::${ECR_REGISTRY%%.*}"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # タグはコミットのハッシュ（PR では、PR を develop に取り込んだ状態のコミット。ビルドした中身と一致する）
+      - name: タグ
+        id: meta
+        run: echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      # ECR は Shared-Infra にある。NonProd の CI ロールのトークンで、リポジトリポリシーにより push できる
+      - name: ECR へのログイン
+        env:
+          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+        run: aws ecr get-login-password | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # タグは上書きできない（IMMUTABLE）ため、同じコミットのイメージがあれば作らない（ジョブの再実行等）
+      #   来歴（provenance）・SBOM の添付はしない（1つのマニフェストにして、ECR のライフサイクルで扱いやすくする）
+      #   Dockerfile のビルドの段はランナーの CPU（x86）で動き、実行の段だけ arm64 になる（エミュレーションしない）
+      - name: イメージのビルドと push（arm64）
+        env:
+          IMAGE: ${{ vars.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.tag }}
+        run: |
+          if docker buildx imagetools inspect "${IMAGE}" > /dev/null 2>&1; then
+            echo "同じタグのイメージがあるため、push しない"
+            exit 0
+          fi
+          docker buildx build --platform linux/arm64 --provenance=false --sbom=false --tag "${IMAGE}" --push .

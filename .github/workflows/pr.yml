@@ -1,0 +1,75 @@
+name: pr
+
+# PR（作成・更新）：ビルド → PR 環境（pr<番号>）へのデプロイ・ヘルスチェック → PR へのコメント
+#   手順は _build.yml・_deploy.yml にまとめてあり、ここでは「いつ・どこに出すか」だけを書く
+#   PR を閉じたときの PR 環境の削除は pr-cleanup.yml
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+# 新しい push が来たら古い実行を止める（pr-cleanup.yml と同じグループ。PR を閉じたら、動いているデプロイを止めてから消す）
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/_build.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      # フォークからの PR では OIDC のトークンが発行されず、AWS に入れないため、イメージを作らない
+      push_image: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+
+  deploy:
+    needs: build
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    uses: ./.github/workflows/_deploy.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      app_env: pr${{ github.event.pull_request.number }}
+      # web の PR 環境は dev-api を呼ぶ（api の PR 環境とは組み合わせない）
+      api_env: dev
+      image_tag: ${{ needs.build.outputs.image_tag }}
+
+  # PR の Conversation に、PR 環境の URL を出す（コメントは1つだけにし、デプロイのたびに書き換える）
+  comment:
+    needs:
+      - build
+      - deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      APP_ENV: pr${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: PR へのコメント
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
+        run: |
+          deployed_at=$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M')
+          bash .github/scripts/pr-env-comment.sh "${PR_NUMBER}" upsert <<EOF
+          ### PR 環境：${APP_ENV}
+
+          | | |
+          | :--- | :--- |
+          | 画面 | https://${APP_ENV}.local.sandbox.yosing.net:8090/ |
+          | ヘルスチェック | https://${APP_ENV}.local.sandbox.yosing.net:8090/api/health |
+          | 呼ぶ API | dev（\`dev-api\`） |
+          | イメージ | \`${IMAGE_TAG:0:7}\` |
+          | デプロイ | ${deployed_at}（JST） |
+
+          開くには SSM のポートフォワーディングが要ります（手順は aws-infra-env の README の「開発環境へのアクセス」）。
+          稼働時間は 9:00〜翌 1:00（JST）です。PR 環境で登録したユーザーは、dev のテーブルに残ります。
+          EOF
