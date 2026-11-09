@@ -29,7 +29,15 @@ const restrict = (files, groups, message) => ({
 const layerRules = [
   restrict(
     ["src/server/domain/**"],
-    [...NEXT_AND_REACT, "@/server/**", "!@/server/domain/**", ...PRESENTATION],
+    // 「@/server/** を禁じて domain だけ除く」は、gitignore の書き方の決まりで除けないため、層を並べる
+    [
+      ...NEXT_AND_REACT,
+      ...PRESENTATION,
+      ...INFRASTRUCTURE,
+      ...WIRING,
+      "@/server/application/**",
+      "@/server/logger",
+    ],
     "domain は domain と @/shared だけに依存する",
   ),
   restrict(
