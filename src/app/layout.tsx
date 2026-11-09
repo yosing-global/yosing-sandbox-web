@@ -11,7 +11,7 @@ const notoSansJp = Noto_Sans_JP({
 });
 
 export const metadata: Metadata = {
-  title: "sandbox",
+  title: { default: "sandbox", template: "%s | sandbox" },
   // 公開しない前提のため、検索エンジンに載せない
   robots: { index: false, follow: false },
 };

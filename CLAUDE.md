@@ -4,7 +4,7 @@ sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）�
 
 ## 状況（2026-11-07 時点）
 
-- Next.js の土台ができた（2026-11-07。ヘルスチェック・静的チェック・単体テスト・Dockerfile）。CI・デプロイ（`.github/workflows`・`deploy/`）を作った（2026-11-09。最初の PR で動作を確かめる）。画面・BFF の土台（shadcn/ui・Storybook・Zod・pino、層の骨組みと ESLint の制限、API の呼び出しの共通部分）を作った（2026-11-09）。画面はまだ無い。作る順番：新規登録 → ログイン → ダッシュボード・ログアウト → エラーの画面（新規登録で作ったユーザーで、ログインを PR 環境で確かめるため）。
+- Next.js の土台ができた（2026-11-07。ヘルスチェック・静的チェック・単体テスト・Dockerfile）。CI・デプロイ（`.github/workflows`・`deploy/`）を作った（2026-11-09。最初の PR で動作を確かめる）。画面・BFF の土台（shadcn/ui・Storybook・Zod・pino、層の骨組みと ESLint の制限、API の呼び出しの共通部分）を作った（2026-11-09）。新規登録の画面（`/register`・`/register/setup`）を作った（2026-11-09。登録後の `/dashboard` はまだ無い）。作る順番：新規登録 → ログイン → ダッシュボード・ログアウト → エラーの画面（新規登録で作ったユーザーで、ログインを PR 環境で確かめるため）。
 - E2E の設計は Notion の「6. テスト仕様」の「yosing-sandbox-e2e E2Eテスト」。
 - API は全部のエンドポイントができている（`yosing-sandbox-api`。仕様はその GitHub Wiki と Notion の「4.3 API設計」）。
 - 画面の URL と BFF の操作は、Notion の「4.2 画面のURLとBFF」で決めた（2026-11-09）。要点は下の「画面の URL と BFF」。
@@ -62,6 +62,8 @@ sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）�
 - 層の依存の向き（domain ← application ← presentation / infrastructure）は、ESLint の `no-restricted-imports` で守らせる（`eslint.config.mjs`）。層をまたぐ import は `@/` から書く（`../` は使えない）。詳細は Notion の「yosing-sandbox-web 内部設計」。
 - API の呼び出しは `callApi`（`src/server/infrastructure/api/api-client.ts`）を通す。想定した失敗（4xx で `code` のあるもの）は結果として返し、想定外（つながらない・5xx 等）は `ApiUnexpectedError` を投げる。ログには操作の名前・状態・`code`・時間だけを出す。
 - お知らせの枠は `Notice`（`src/components/notice.tsx`）を使う（`variant` で `role` が決まる）。shadcn/ui の Alert は `role="alert"` だけのため使わない。
+- **離れた画面は消えずに残る**（Cache Components。React の `<Activity>` で隠して最大3つ残し、入力値・`useState`・`useActionState` の結果も残る）。ログイン・登録のフォームは `ResetWhenHidden`（`src/components/reset-when-hidden.tsx`）で囲み、離れたら作り直す（パスワード・古いお知らせを残さない）。秘密情報を持つ store は、画面から離れたら消す（`registration-store.tsx`）。詳細は `node_modules/next/dist/docs/01-app/02-guides/preserving-ui-state.md`。
+- 文言は `src/shared/messages.ts` にまとめる（正は 4.1）。
 - 画像の最適化（sharp）は使わない（`images.unoptimized`）。ビルド（x86）と実行（arm64）で CPU が違うため。
 - `public/robots.txt` で、検索エンジンに載せない（公開しない前提のため）。
 
@@ -69,6 +71,7 @@ sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）�
 
 - 入力欄には必ず `<label>` を付ける。アイコンだけのボタンには `aria-label` を付ける（例：「パスワードを表示」）。
 - お知らせの枠には `role="alert"`（赤）・`role="status"`（青）を付ける。入力欄の下の誤りは `aria-describedby` で入力欄に結びつける。
+  - Next.js が画面の移動を読み上げる部品（`next-route-announcer`。shadow DOM の中）も `role="alert"` を持つ。Playwright は shadow DOM の中も探すため、E2E では `main` の中に絞って探す（例：`page.locator("main").getByRole("alert")`）。
 - ステップ表示の今のステップに `aria-current="step"` を付ける。
 - 毎回変わる値（セットアップキー・QR コード）は、ラベル・代替テキストで名前を付ける。`data-testid` は、どれでも探せないときだけ使う。
 - 文言は UI/UX 設計（Notion の「4.1 UI/UX設計」）が正。変えるときは、UI/UX 設計 → E2E → web の順に直す。
