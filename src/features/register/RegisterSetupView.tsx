@@ -1,14 +1,13 @@
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import type { FormEventHandler } from "react";
-import { FormField } from "@/components/form-field";
 import { Notice } from "@/components/notice";
+import { OtpCodeField } from "@/components/otp-code-field";
 import { Steps } from "@/components/steps";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { REGISTER_STEPS } from "@/features/register/RegisterView";
 import { cn } from "@/lib/utils";
-import { fieldErrorMessage, NOTICE_MESSAGES } from "@/shared/messages";
+import { NOTICE_MESSAGES } from "@/shared/messages";
 import type { FieldErrorKind } from "@/shared/validation";
 
 // 新規登録（ステップ2：認証アプリの設定）の見た目
@@ -111,26 +110,7 @@ export function RegisterSetupView({
           </div>
         )}
         <form action={action} onSubmit={onSubmit} noValidate className="m-0 flex flex-col gap-5">
-          <FormField
-            id="code"
-            label="6桁のコード"
-            hint="コードは30秒ごとに変わります"
-            error={fieldErrorMessage("code", fieldErrors.code)}
-            describedBy={notice ? NOTICE_ID : undefined}
-          >
-            {(control) => (
-              <Input
-                {...control}
-                name="code"
-                type="text"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={6}
-                placeholder="000000"
-                className="h-15 rounded-lg border-input bg-background pl-[0.5em] text-center font-mono text-[28px] tracking-[0.5em] md:text-[28px] aria-invalid:border-2 aria-invalid:border-danger aria-invalid:ring-0"
-              />
-            )}
-          </FormField>
+          <OtpCodeField error={fieldErrors.code} describedBy={notice ? NOTICE_ID : undefined} />
           <Button type="submit" disabled={pending} className="h-12 text-base font-bold">
             登録する
           </Button>

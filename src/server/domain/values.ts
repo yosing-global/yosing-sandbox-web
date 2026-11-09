@@ -12,6 +12,11 @@ export type OtpCode = Brand<string, "OtpCode">;
 /** 登録 ID（API が発行する UUID） */
 export type RegistrationId = Brand<string, "RegistrationId">;
 
+/** 仮認証 JWT（API が発行する。中身は見ず、そのまま API に渡す） */
+export type LoginToken = Brand<string, "LoginToken">;
+
+// JWT は base64url の3つの部分を「.」でつないだもの（Cookie の値として安全な文字だけ）
+const LOGIN_TOKEN_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function of<T extends string>(name: string, pattern: RegExp) {
@@ -30,4 +35,8 @@ export const OtpCode = { of: of<OtpCode>("OtpCode", OTP_CODE_PATTERN) };
 export const RegistrationId = {
   of: of<RegistrationId>("RegistrationId", UUID_PATTERN),
   isValid: (value: string) => UUID_PATTERN.test(value),
+};
+export const LoginToken = {
+  of: of<LoginToken>("LoginToken", LOGIN_TOKEN_PATTERN),
+  isValid: (value: string) => LOGIN_TOKEN_PATTERN.test(value),
 };

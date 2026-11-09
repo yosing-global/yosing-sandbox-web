@@ -1,15 +1,7 @@
+import type { ApiFieldError, Session } from "@/server/domain/auth";
 import type { RegistrationId } from "@/server/domain/values";
 
 // 新規登録の結果の型（想定した失敗は例外にせず、kind で分ける。文言は画面の側で決める）
-
-/** API の VALIDATION_FAILED の項目ごとの誤り（項目の名前は API のもの） */
-export type ApiFieldError = { field: string };
-
-export type Session = {
-  sessionId: string;
-  /** セッションの期限（API の sessionExpiresAt。Cookie の Expires にそのまま使う） */
-  expiresAt: Date;
-};
 
 /** API の登録の開始の結果 */
 export type RegistrationStartResult =
