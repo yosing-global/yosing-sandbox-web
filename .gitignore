@@ -32,6 +32,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# 手元の開発の設定（秘密の値を含まない）だけはコミットする
+!.env.development
 
 # vercel
 .vercel
@@ -39,3 +41,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Storybook
+/storybook-static
+*storybook.log

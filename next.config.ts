@@ -13,6 +13,9 @@ const nextConfig: NextConfig = {
   outputFileTracingExcludes: {
     "*": ["node_modules/sharp/**", "node_modules/@img/**"],
   },
+  // ログ（pino）の ECS 形式の部品は、バンドルせず node_modules から読む
+  //   （pino は Next.js が既定で外す。この部品は使わない elastic-apm-node を require しようとするため）
+  serverExternalPackages: ["@elastic/ecs-pino-format"],
   turbopack: {
     rules: {
       "*.css": {

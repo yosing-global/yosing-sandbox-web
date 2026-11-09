@@ -4,12 +4,13 @@ sandbox アプリの画面と BFF（Next.js）のリポジトリです。
 
 ## 手元での動かし方
 
-Node.js 24 が必要です。
+Node.js 24 が必要です。API（`yosing-sandbox-api`）は手元で起動したもの（http://localhost:8080）を使います（`.env.development`）。
 
 ```bash
 npm ci
 npm run dev     # http://localhost:3000
 npm run check   # 整形の確認・ESLint・型チェック・単体テスト
+npm run storybook  # 画面モック（http://localhost:6006）
 ```
 
 本番と同じコンテナ（linux/arm64）は、次のコマンドで作れます。
