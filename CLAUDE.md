@@ -4,7 +4,7 @@ sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）�
 
 ## 状況（2026-11-07 時点）
 
-- Next.js の土台ができた（2026-11-07。ヘルスチェック・静的チェック・単体テスト・Dockerfile）。CI・デプロイ（`.github/workflows`・`deploy/`）を作った（2026-11-09。最初の PR で動作を確かめる）。画面・BFF はまだ無い。
+- Next.js の土台ができた（2026-11-07。ヘルスチェック・静的チェック・単体テスト・Dockerfile）。CI・デプロイ（`.github/workflows`・`deploy/`）を作った（2026-11-09。最初の PR で動作を確かめる）。画面・BFF の土台（shadcn/ui・Storybook・Zod・pino、層の骨組みと ESLint の制限、API の呼び出しの共通部分）を作った（2026-11-09）。画面はまだ無い。作る順番：新規登録 → ログイン → ダッシュボード・ログアウト → エラーの画面（新規登録で作ったユーザーで、ログインを PR 環境で確かめるため）。
 - E2E の設計は Notion の「6. テスト仕様」の「yosing-sandbox-e2e E2Eテスト」。
 - API は全部のエンドポイントができている（`yosing-sandbox-api`。仕様はその GitHub Wiki と Notion の「4.3 API設計」）。
 - 画面の URL と BFF の操作は、Notion の「4.2 画面のURLとBFF」で決めた（2026-11-09）。要点は下の「画面の URL と BFF」。
@@ -17,10 +17,13 @@ sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）�
 | 項目 | 内容 |
 | :--- | :--- |
 | 言語・フレームワーク | TypeScript 5、Next.js 16（App Router、Cache Components を有効）、React 19。Node.js 24 |
-| 画面の見た目 | Tailwind CSS 4（色・文字は `src/app/globals.css` の `@theme` に名前を付けて置き、画面では名前で使う）。部品は shadcn/ui を、画面を作るときに入れる |
+| 画面の見た目 | Tailwind CSS 4（色・文字は `src/app/globals.css` に名前を付けて置き、画面では名前で使う。名前は shadcn/ui にそろえる）。部品は shadcn/ui（Radix）。ダークモードは作らない |
+| PC とスマホ | Tailwind のブレークポイント（`md`＝768px 以上を PC）で、CSS だけで切り替える（同じ HTML）。例外は「QR コードを読み取れない場合」の最初の開閉（`matchMedia`）。スマホでは入力欄の文字を 16px 以上にする（iOS の拡大を防ぐ） |
+| 入力の規則 | Zod 4（`src/shared/validation.ts`。API と同じ規則。誤りは種類だけを返し、文言は画面の側） |
+| ログ | pino ＋ `@elastic/ecs-pino-format`（ECS 形式の JSON。api と同じ項目名）。`src/server/logger.ts` |
 | 単体テスト | Vitest ＋ Testing Library（jsdom）。テストのファイルは対象の隣に `*.test.ts(x)` |
 | 静的チェック | ESLint（`eslint-config-next`）・Prettier・型チェック（`tsc`） |
-| 画面モック | Storybook（`mocks/` に置く）。画面を作るときに入れる |
+| 画面モック | Storybook 10（`@storybook/nextjs-vite`）。ストーリーは `mocks/` に置く（イメージに入れない） |
 | 役割 | 画面と BFF。ブラウザーは web とだけ通信し（同じオリジン）、web のサーバー側が VPC の中で API を呼ぶ |
 | 実行環境 | Amazon ECS on AWS Fargate（ARM64、nonprod は Fargate Spot）。コンテナは 8080 で待ち受ける |
 | イメージ | Shared-Infra の ECR `sandbox/web`。linux/arm64。タグはコミットのハッシュ |
@@ -40,14 +43,25 @@ sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）�
 | `npm run check` | 整形の確認・ESLint・型チェック・単体テストをまとめて動かす（CI の `check` と同じ） |
 | `npm run format` | 整形する |
 | `npm run build` | 本番のビルド（`.next/standalone` に出力） |
+| `npm run storybook` | 画面モック（http://localhost:6006） |
+| `npx shadcn add <部品>` | shadcn/ui の部品を `src/components/ui/` に足す（生成されたままにする） |
 | `docker buildx build --platform linux/arm64 -t sandbox-web:local --load .` | 本番と同じ arm64 のイメージを作る（手元では `docker run --platform linux/arm64 -p 8080:8080 sandbox-web:local`） |
 
 | 場所 | 内容 |
 | :--- | :--- |
 | `src/app/` | ルーティング（画面・Route Handler・Server Action）。`src/app/api/health/route.ts` がヘルスチェック |
-| `src/app/globals.css` | 色・文字の決まり（`@theme`） |
+| `src/app/globals.css` | 色・文字の決まり（`:root` の変数と `@theme`） |
+| `src/features/<機能>/` | 機能ごとの画面の部品（`XxxView.tsx`）とコントローラー（`actions.ts`。Server Action） |
+| `src/components/` | 機能をまたぐ画面の部品（お知らせの枠 `notice.tsx` 等）。`ui/` は shadcn/ui |
+| `src/server/` | サーバー側だけ（`import "server-only"`）。`presentation/`・`application/`（`port/`）・`domain/`・`infrastructure/`（`api/` が API の呼び出しの共通部分）・`container.ts`（実装の組み立て）・`config.ts`（環境変数）・`logger.ts` |
+| `src/shared/` | 画面とサーバーの両方で使う（入力の規則・日時の表示） |
+| `mocks/` | Storybook のストーリー |
+| `.env.development` | 手元の開発の設定（`API_BASE_URL=http://localhost:8080`。秘密の値は書かない） |
 | `Dockerfile` | ビルドの段は `$BUILDPLATFORM`（x86 のまま）、実行の段は arm64。実行の段では `RUN` を使わない（エミュレーションが要らないように） |
 
+- 層の依存の向き（domain ← application ← presentation / infrastructure）は、ESLint の `no-restricted-imports` で守らせる（`eslint.config.mjs`）。層をまたぐ import は `@/` から書く（`../` は使えない）。詳細は Notion の「yosing-sandbox-web 内部設計」。
+- API の呼び出しは `callApi`（`src/server/infrastructure/api/api-client.ts`）を通す。想定した失敗（4xx で `code` のあるもの）は結果として返し、想定外（つながらない・5xx 等）は `ApiUnexpectedError` を投げる。ログには操作の名前・状態・`code`・時間だけを出す。
+- お知らせの枠は `Notice`（`src/components/notice.tsx`）を使う（`variant` で `role` が決まる）。shadcn/ui の Alert は `role="alert"` だけのため使わない。
 - 画像の最適化（sharp）は使わない（`images.unoptimized`）。ビルド（x86）と実行（arm64）で CPU が違うため。
 - `public/robots.txt` で、検索エンジンに載せない（公開しない前提のため）。
 
