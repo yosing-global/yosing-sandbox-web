@@ -1,0 +1,7 @@
+.next/
+out/
+coverage/
+package-lock.json
+next-env.d.ts
+# 文書は手で整える（表の幅などを Prettier に変えさせない）
+*.md

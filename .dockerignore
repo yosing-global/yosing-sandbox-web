@@ -1,0 +1,15 @@
+# イメージに入れないもの（ビルドに要るのは package*.json・設定・src・public だけ）
+.git
+.github
+.next
+node_modules
+coverage
+mocks
+.storybook
+**/*.test.ts
+**/*.test.tsx
+**/*.stories.tsx
+*.md
+.env*
+Dockerfile
+.dockerignore

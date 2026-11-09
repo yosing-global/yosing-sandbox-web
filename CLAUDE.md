@@ -4,7 +4,8 @@ sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）�
 
 ## 状況（2026-11-07 時点）
 
-- リポジトリは README だけ。Next.js の土台から作る。
+- Next.js の土台ができた（2026-11-07。ヘルスチェック・静的チェック・単体テスト・Dockerfile）。画面・BFF・CI（`.github/workflows`・`deploy/`）はまだ無い。
+- E2E の設計は Notion の「6. テスト仕様」の「yosing-sandbox-e2e E2Eテスト」。
 - API は全部のエンドポイントができている（`yosing-sandbox-api`。仕様はその GitHub Wiki と Notion の「4.2 API設計」）。
 - 画面の UI/UX は、Claude Code がキャンバス（claude.ai の Artifact「ログイン画面レイアウト案」 https://claude.ai/artifact/QHTRJ4g4wXWgbEoMo3GGEn ）に描いて決めた（2026-11-07）。要点は下の「画面（UI/UX）」。結果は Notion の「4.1 UI/UX設計」にも残す。
 - nonprod のインフラ（ECR の `sandbox/web`、CI ロール、タスクロール、SG、ロググループ）は準備済み。stg / prod のインフラはまだ無い（最後にまとめて作る）。
@@ -14,14 +15,48 @@ sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）�
 
 | 項目 | 内容 |
 | :--- | :--- |
-| 言語・フレームワーク | TypeScript、Next.js（App Router を想定。版は土台を作るときに決めて、ここに書く） |
+| 言語・フレームワーク | TypeScript 5、Next.js 16（App Router、Cache Components を有効）、React 19。Node.js 24 |
+| 画面の見た目 | Tailwind CSS 4（色・文字は `src/app/globals.css` の `@theme` に名前を付けて置き、画面では名前で使う）。部品は shadcn/ui を、画面を作るときに入れる |
+| 単体テスト | Vitest ＋ Testing Library（jsdom）。テストのファイルは対象の隣に `*.test.ts(x)` |
+| 静的チェック | ESLint（`eslint-config-next`）・Prettier・型チェック（`tsc`） |
+| 画面モック | Storybook（`mocks/` に置く）。画面を作るときに入れる |
 | 役割 | 画面と BFF。ブラウザーは web とだけ通信し（同じオリジン）、web のサーバー側が VPC の中で API を呼ぶ |
 | 実行環境 | Amazon ECS on AWS Fargate（ARM64、nonprod は Fargate Spot）。コンテナは 8080 で待ち受ける |
 | イメージ | Shared-Infra の ECR `sandbox/web`。linux/arm64。タグはコミットのハッシュ |
 | デプロイ | GitHub Actions ＋ ecspresso（api と同じ作り。下の「CI」） |
 | E2E | 別のリポジトリ `yosing-sandbox-e2e`（Playwright）。web・api の CI から呼ぶ |
 
-- UI のライブラリ・単体テストの道具・静的チェックは、土台を作るときに決めて、ここに書き足す。
+- この Next.js は、Claude の知識より新しい版。コードを書く前に `AGENTS.md`（Next.js が作るファイル。`next dev` が書き直すので消さない）の指示どおり、`node_modules/next/dist/docs/` の該当の文書を読む。
+
+@AGENTS.md
+
+### 手元での開発
+
+| コマンド | 内容 |
+| :--- | :--- |
+| `npm ci` | 依存を入れる |
+| `npm run dev` | 開発サーバー（http://localhost:3000） |
+| `npm run check` | 整形の確認・ESLint・型チェック・単体テストをまとめて動かす（CI の `check` と同じ） |
+| `npm run format` | 整形する |
+| `npm run build` | 本番のビルド（`.next/standalone` に出力） |
+| `docker buildx build --platform linux/arm64 -t sandbox-web:local --load .` | 本番と同じ arm64 のイメージを作る（手元では `docker run --platform linux/arm64 -p 8080:8080 sandbox-web:local`） |
+
+| 場所 | 内容 |
+| :--- | :--- |
+| `src/app/` | ルーティング（画面・Route Handler・Server Action）。`src/app/api/health/route.ts` がヘルスチェック |
+| `src/app/globals.css` | 色・文字の決まり（`@theme`） |
+| `Dockerfile` | ビルドの段は `$BUILDPLATFORM`（x86 のまま）、実行の段は arm64。実行の段では `RUN` を使わない（エミュレーションが要らないように） |
+
+- 画像の最適化（sharp）は使わない（`images.unoptimized`）。ビルド（x86）と実行（arm64）で CPU が違うため。
+- `public/robots.txt` で、検索エンジンに載せない（公開しない前提のため）。
+
+### 画面の作りの決まり（E2E が画面の文言で部品を探すため）
+
+- 入力欄には必ず `<label>` を付ける。アイコンだけのボタンには `aria-label` を付ける（例：「パスワードを表示」）。
+- お知らせの枠には `role="alert"`（赤）・`role="status"`（青）を付ける。入力欄の下の誤りは `aria-describedby` で入力欄に結びつける。
+- ステップ表示の今のステップに `aria-current="step"` を付ける。
+- 毎回変わる値（セットアップキー・QR コード）は、ラベル・代替テキストで名前を付ける。`data-testid` は、どれでも探せないときだけ使う。
+- 文言は UI/UX 設計（Notion の「4.1 UI/UX設計」）が正。変えるときは、UI/UX 設計 → E2E → web の順に直す。
 
 ## 関連リポジトリ（`../` に clone 済み）
 
@@ -144,7 +179,7 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 
 - nonprod（dev / test / PR 環境）は1つの AWS アカウント（NonProd）を、api と共有する。
 - nonprod の URL は `https://<env>.local.sandbox.yosing.net:8090`（api は `https://<env>.api.local.sandbox.yosing.net:8090`）。SSM のポートフォワーディング（手元の 8090 → リバースプロキシの 443）でつなぐ。手順は `../aws-infra-env/README.md`（API の Wiki の「環境別接続手順」にも同じ手順）。
-- `/healthz` はリバースプロキシ（NGINX）が先に応答するため、web のヘルスチェックには別のパスを使う（例：`/api/health`。実装のときに決める）。
+- `/healthz` はリバースプロキシ（NGINX）が先に応答するため、web のヘルスチェックは `/api/health`（`{"status":"UP"}`。API には問い合わせない）。
 - nonprod の稼働時間は毎日 9:00〜翌 1:00（JST）。それ以外はタスクが 0 になる。
 - stg / prod の公開の入口は CloudFront ＋ 外部 ALB ＋ WAF（送信元ごとのレート制限は WAF で行う）。作るのは最後。
 - **prod は、ふだんは消しておく**（公開しない前提）。そのあいだは、メンテナンスのページを出す（2026-11-07 に決めた方針。作るのは stg / prod のインフラのとき）。

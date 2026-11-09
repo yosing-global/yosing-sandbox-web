@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+/*
+ * 色と文字の決まり（Notion の「4.1 UI/UX設計」・キャンバスに合わせる）。
+ * 画面ではここで決めた名前（bg-primary など）を使い、色の値を直接書かない。
+ */
+@theme inline {
+  --color-background: #ffffff;
+  --color-foreground: #0f172a;
+  --color-muted: #475569;
+  --color-subtle: #64748b;
+  --color-border: #e2e8f0;
+  --color-input: #8b95a7;
+
+  /* ポイントの色（青） */
+  --color-primary: #2563eb;
+  --color-primary-foreground: #ffffff;
+  --color-link: #1d4ed8;
+  --color-primary-soft: #eff6ff;
+
+  /* お知らせ：赤（利用者の操作に原因があるもの） */
+  --color-danger: #b91c1c;
+  --color-danger-strong: #991b1b;
+  --color-danger-soft: #fef2f2;
+  --color-danger-border: #fecaca;
+
+  /* お知らせ：青（利用者のせいではないもの） */
+  --color-info: #1e3a8a;
+  --color-info-soft: #eff6ff;
+  --color-info-border: #bfdbfe;
+
+  --font-sans: var(--font-noto-sans-jp), system-ui, sans-serif;
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+}
