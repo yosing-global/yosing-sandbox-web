@@ -7,7 +7,11 @@ import {
   SESSION_COOKIE,
   sessionCookieOptions,
 } from "@/server/presentation/cookie-names";
-import { CURRENT_USER_HEADER, encodeCurrentUser } from "@/server/presentation/current-user-header";
+import {
+  CURRENT_USER_ERROR_HEADER,
+  CURRENT_USER_HEADER,
+  encodeCurrentUser,
+} from "@/server/presentation/current-user-header";
 
 // proxy（旧 middleware）：画面を開く前の振り分け（設計は Notion の「4.2 画面のURLとBFF」）
 //   /                        ：ログイン中なら /dashboard、そうでなければ /login
@@ -16,12 +20,14 @@ import { CURRENT_USER_HEADER, encodeCurrentUser } from "@/server/presentation/cu
 //   /dashboard               ：GET /v1/me でセッションを確かめ、Cookie の期限を延ばし、ユーザーを画面に渡す
 //                              Cookie が無ければ /login、無効なら Cookie を消して /login?notice=expired
 //   redirect の URL は request.url から作る（同じオリジンなら、Next.js が Location を相対の URL にする）
-//   API の想定外の失敗（つながらない等）は投げる（Next.js が 500 を返す）
+//   API の想定外の失敗（つながらない等）は、ここでは投げず、画面に伝えてエラーの画面（error.tsx）に出す
+//   （proxy の中で投げると、Next.js の素の 500 になるため）。失敗の中身は callApi がログに出している
 
 export async function proxy(request: NextRequest) {
   // 画面に渡すヘッダーは、ブラウザーから来たものを必ず消す（偽のユーザーを画面に出させない）
   const headers = new Headers(request.headers);
   headers.delete(CURRENT_USER_HEADER);
+  headers.delete(CURRENT_USER_ERROR_HEADER);
   const pass = () => NextResponse.next({ request: { headers } });
   const redirectTo = (path: string) => NextResponse.redirect(new URL(path, request.url));
 
@@ -50,7 +56,13 @@ export async function proxy(request: NextRequest) {
     if (!SessionId.isValid(sessionCookie)) {
       return expired();
     }
-    const result = await usecases.getCurrentUser(SessionId.of(sessionCookie));
+    let result;
+    try {
+      result = await usecases.getCurrentUser(SessionId.of(sessionCookie));
+    } catch {
+      headers.set(CURRENT_USER_ERROR_HEADER, "1");
+      return pass();
+    }
     if (result.kind === "session-invalid") {
       return expired();
     }

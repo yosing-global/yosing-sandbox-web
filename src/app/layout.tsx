@@ -1,14 +1,6 @@
 import type { Metadata } from "next";
-import { Noto_Sans_JP } from "next/font/google";
+import { notoSansJp } from "./fonts";
 import "./globals.css";
-
-// フォントはビルドの時に取り込み、自分のサーバーから配る（ブラウザーから Google に通信しない）
-const notoSansJp = Noto_Sans_JP({
-  variable: "--font-noto-sans-jp",
-  weight: ["400", "500", "700"],
-  subsets: ["latin"],
-  display: "swap",
-});
 
 export const metadata: Metadata = {
   title: { default: "sandbox", template: "%s | sandbox" },
