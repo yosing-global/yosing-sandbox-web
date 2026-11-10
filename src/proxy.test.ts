@@ -127,20 +127,28 @@ describe("/dashboard", () => {
     expect(getCurrentUser).not.toHaveBeenCalled();
   });
 
-  it("API の想定外の失敗は投げる", async () => {
+  it("API の想定外の失敗：投げずに、画面に失敗を伝える（エラーの画面に出す。Cookie はそのまま）", async () => {
     getCurrentUser.mockRejectedValue(new Error("dummy"));
 
-    await expect(proxy(request("/dashboard", { cookie: SESSION }))).rejects.toThrow("dummy");
+    const response = await proxy(request("/dashboard", { cookie: SESSION }));
+
+    expect(location(response)).toBeNull();
+    expect(forwarded(response, "x-sandbox-current-user-error")).toBe("1");
+    expect(forwarded(response, "x-sandbox-current-user")).toBeNull();
+    expect(response.headers.get("set-cookie")).toBeNull();
   });
 });
 
 describe("共通", () => {
   it("ブラウザーが送ってきたユーザーのヘッダーは、画面に渡さない", async () => {
     const response = await proxy(
-      request("/register", { headers: { "x-sandbox-current-user": "dummy" } }),
+      request("/register", {
+        headers: { "x-sandbox-current-user": "dummy", "x-sandbox-current-user-error": "1" },
+      }),
     );
 
     expect(forwarded(response, "x-sandbox-current-user")).toBeNull();
+    expect(forwarded(response, "x-sandbox-current-user-error")).toBeNull();
   });
 
   it("POST（Server Action）は移さない（コントローラーが確かめる）", async () => {
