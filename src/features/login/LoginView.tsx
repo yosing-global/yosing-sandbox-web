@@ -56,7 +56,6 @@ export function LoginView({
 
       <form action={action} onSubmit={onSubmit} noValidate className="m-0 flex flex-col gap-5">
         <FormField
-          id="login-id"
           label="ログイン ID"
           hint="英字・数字・_・- で3〜32文字"
           error={fieldErrorMessage("loginId", fieldErrors.loginId)}
@@ -75,11 +74,7 @@ export function LoginView({
             />
           )}
         </FormField>
-        <FormField
-          id="password"
-          label="パスワード"
-          error={fieldErrorMessage("password", fieldErrors.password)}
-        >
+        <FormField label="パスワード" error={fieldErrorMessage("password", fieldErrors.password)}>
           {(control) => (
             <PasswordInput
               {...control}

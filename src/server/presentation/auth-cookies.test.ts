@@ -1,7 +1,13 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LoginToken } from "@/server/domain/values";
-import { readLoginCookie, setLoginCookie, startAuthenticatedSession } from "./auth-cookies";
+import {
+  deleteSessionCookie,
+  readLoginCookie,
+  readSessionCookie,
+  setLoginCookie,
+  startAuthenticatedSession,
+} from "./auth-cookies";
 
 const set = vi.fn();
 const get = vi.fn();
@@ -49,6 +55,29 @@ describe("setLoginCookie", () => {
       sameSite: "lax",
       path: "/login",
       expires: expiresAt,
+    });
+  });
+});
+
+describe("readSessionCookie・deleteSessionCookie", () => {
+  it("値を返す。形が違えば null", async () => {
+    get.mockReturnValueOnce({ value: "dummy-session-id-0123456789" });
+    expect(await readSessionCookie()).toBe("dummy-session-id-0123456789");
+    expect(get).toHaveBeenCalledWith("__Host-session");
+
+    get.mockReturnValueOnce({ value: "a b" });
+    expect(await readSessionCookie()).toBeNull();
+  });
+
+  it("消すときは、設定したときと同じ属性にする", async () => {
+    await deleteSessionCookie();
+
+    expect(set).toHaveBeenCalledWith("__Host-session", "", {
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 0,
     });
   });
 });

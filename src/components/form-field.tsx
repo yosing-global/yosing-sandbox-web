@@ -1,10 +1,12 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useId } from "react";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
 // 入力欄の枠（ラベル・入力欄・下の案内または誤り）
 //   誤りがあるときは、案内の代わりに誤りを出し、aria-describedby で入力欄に結びつける
 //   入力欄そのものは children の関数で受け取り、結びつけに使う属性を渡す
+//   id は useId で作る（Cache Components では離れた画面を隠して残すため、固定の id だと、隠れた画面の入力欄と
+//   ぶつかり、ラベルが隠れた入力欄を指してしまう）
 export type FieldControlProps = {
   id: string;
   "aria-invalid": true | undefined;
@@ -12,7 +14,6 @@ export type FieldControlProps = {
 };
 
 type Props = {
-  id: string;
   label: string;
   hint?: string;
   error?: string;
@@ -21,7 +22,8 @@ type Props = {
   children: (control: FieldControlProps) => ReactNode;
 };
 
-export function FormField({ id, label, hint, error, describedBy, children }: Props) {
+export function FormField({ label, hint, error, describedBy, children }: Props) {
+  const id = useId();
   const messageId = error ? `${id}-error` : hint ? `${id}-hint` : undefined;
   const ids = [describedBy, messageId].filter(Boolean).join(" ");
   return (

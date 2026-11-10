@@ -3,8 +3,11 @@ import { startLogin } from "@/server/application/login/start-login";
 import { verifyLogin } from "@/server/application/login/verify-login";
 import { startRegistration } from "@/server/application/registration/start-registration";
 import { verifyRegistration } from "@/server/application/registration/verify-registration";
+import { getCurrentUser } from "@/server/application/session/get-current-user";
+import { logout } from "@/server/application/session/logout";
 import { loginApiClient } from "@/server/infrastructure/api/login-api-client";
 import { registrationApiClient } from "@/server/infrastructure/api/registration-api-client";
+import { sessionApiClient } from "@/server/infrastructure/api/session-api-client";
 import { otpSetupRenderer } from "@/server/infrastructure/qrcode/otp-setup-renderer";
 
 // 実装の組み立て（presentation と infrastructure をつなぐ唯一の場所。DI のライブラリは使わない）
@@ -18,4 +21,6 @@ export const usecases = {
   verifyRegistration: verifyRegistration({ registrationApi: registrationApiClient }),
   startLogin: startLogin({ loginApi: loginApiClient }),
   verifyLogin: verifyLogin({ loginApi: loginApiClient }),
+  getCurrentUser: getCurrentUser({ sessionApi: sessionApiClient }),
+  logout: logout({ sessionApi: sessionApiClient }),
 };

@@ -4,7 +4,7 @@ sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）�
 
 ## 状況（2026-11-07 時点）
 
-- Next.js の土台ができた（2026-11-07。ヘルスチェック・静的チェック・単体テスト・Dockerfile）。CI・デプロイ（`.github/workflows`・`deploy/`）を作った（2026-11-09。最初の PR で動作を確かめる）。画面・BFF の土台（shadcn/ui・Storybook・Zod・pino、層の骨組みと ESLint の制限、API の呼び出しの共通部分）を作った（2026-11-09）。新規登録の画面（`/register`・`/register/setup`）を作った（2026-11-09）。ログインの画面（`/login`・`/login/verify`）と proxy（`src/proxy.ts`。今は `/login/verify` の振り分けだけ）を作った（2026-11-09。登録・ログインの後の `/dashboard` はまだ無い）。作る順番：新規登録 → ログイン → ダッシュボード・ログアウト → エラーの画面（新規登録で作ったユーザーで、ログインを PR 環境で確かめるため）。
+- Next.js の土台ができた（2026-11-07。ヘルスチェック・静的チェック・単体テスト・Dockerfile）。CI・デプロイ（`.github/workflows`・`deploy/`）を作った（2026-11-09。最初の PR で動作を確かめる）。画面・BFF の土台（shadcn/ui・Storybook・Zod・pino、層の骨組みと ESLint の制限、API の呼び出しの共通部分）を作った（2026-11-09）。新規登録の画面（`/register`・`/register/setup`）を作った（2026-11-09）。ログインの画面（`/login`・`/login/verify`）を作った（2026-11-09）。ダッシュボード（`/dashboard`）・ログアウトと、proxy（`src/proxy.ts`。ログイン状態の振り分け・セッションの延長）を作った（2026-11-10。機能・設定のメニューは仮置きで、画面が無いためリンクにしていない）。作る順番：新規登録 → ログイン → ダッシュボード・ログアウト → エラーの画面（新規登録で作ったユーザーで、ログインを PR 環境で確かめるため）。
 - E2E の設計は Notion の「6. テスト仕様」の「yosing-sandbox-e2e E2Eテスト」。
 - API は全部のエンドポイントができている（`yosing-sandbox-api`。仕様はその GitHub Wiki と Notion の「4.3 API設計」）。
 - 画面の URL と BFF の操作は、Notion の「4.2 画面のURLとBFF」で決めた（2026-11-09）。要点は下の「画面の URL と BFF」。
@@ -72,6 +72,8 @@ sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）�
 - 入力欄には必ず `<label>` を付ける。アイコンだけのボタンには `aria-label` を付ける（例：「パスワードを表示」）。
 - お知らせの枠には `role="alert"`（赤）・`role="status"`（青）を付ける。入力欄の下の誤りは `aria-describedby` で入力欄に結びつける。
   - Next.js が画面の移動を読み上げる部品（`next-route-announcer`。shadow DOM の中）も `role="alert"` を持つ。Playwright は shadow DOM の中も探すため、E2E では `main` の中に絞って探す（例：`page.locator("main").getByRole("alert")`）。
+  - 離れた画面は隠して残る（下の「離れた画面は消えずに残る」）。Playwright の `getByLabel` は隠れた要素も探すため、ログイン → 新規登録のように同じラベルの画面を行き来すると、2つに当たる。E2E では見えているものに絞る（例：`page.getByLabel("ログイン ID").filter({ visible: true })`）。`getByRole` は隠れた要素を除くので、そのままでよい。
+- 入力欄の `id` は固定にしない（`FormField` が `useId` で作る）。隠れて残った画面の入力欄と同じ `id` になると、ラベルが隠れた入力欄を指してしまう。
 - ステップ表示の今のステップに `aria-current="step"` を付ける。
 - 毎回変わる値（セットアップキー・QR コード）は、ラベル・代替テキストで名前を付ける。`data-testid` は、どれでも探せないときだけ使う。
 - 文言は UI/UX 設計（Notion の「4.1 UI/UX設計」）が正。変えるときは、UI/UX 設計 → E2E → web の順に直す。
@@ -115,6 +117,9 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 | `/api/health` | （ヘルスチェック） | Route Handler | ― | `{"status":"UP"}` |
 
 - BFF の入口：フォームの操作は Server Action（決まった URL は無く、画面の URL への POST）。画面を開く前の振り分けと Cookie の延長は proxy（旧 middleware）。画面から呼ばない入口だけ Route Handler。
+- proxy が `GET /v1/me` で得たユーザーは、要求ヘッダー（`x-sandbox-current-user`）で画面に渡す（`requireCurrentUser`）。ブラウザーが同じ名前のヘッダーを送っても使わないよう、proxy が必ず消してから付ける。
+- Server Action の `redirect("/dashboard")`（登録・ログインの確定）では、Next.js が自分に GET し直すので proxy も動く。ただし、そのときの proxy の `Set-Cookie`（期限の延長）はブラウザーに届かない（発行したばかりの期限のままで、問題はない）。
+- ログイン中の画面は `UnmountWhenHidden` で囲み、離れたら DOM から外す（ログアウトの後、隠れた画面にログイン ID 等を残さない）。ただし `/dashboard` を全体の読み込みで開いた場合、その HTML の `<script>`（Next.js の描画のデータ）には、次の全体の読み込みまで残る。
 - proxy は画面を開くとき（GET・HEAD）だけ振り分ける。Server Action（POST）を移すと画面が応答を読めなくなるため、POST の Cookie の確認はコントローラーで行う（例：`verifyLogin` は仮認証の Cookie が無ければ `/login?notice=expired`）。
 - Server Component（画面の表示）の中では Cookie を書き換えられない（Next.js の決まり）。そのため、`GET /v1/me` のたびの Cookie の延長と、無効なセッションの Cookie の削除は、`/dashboard` を開く前の proxy で行う。
 - **新規登録の設定の値はブラウザーのメモリに持つ**：API には設定 URI（`otpauthUri`）を取り直すエンドポイントが無い（登録 ID だけで取り直せると秘密情報が漏れるため）。そのため、`startRegistration` が返す登録 ID・QR コード・キーを React の store（メモリ）に入れ、`/register/setup` は store から表示する。`sessionStorage` 等には入れない（秘密情報を残さないため）。リロード・URL の直打ちで store が空なら `/register` に戻す（登録をやり直す）。設定 URI そのものはブラウザーに渡さない（BFF で QR コードの SVG にする）。
