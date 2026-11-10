@@ -15,8 +15,13 @@ export type RegistrationId = Brand<string, "RegistrationId">;
 /** 仮認証 JWT（API が発行する。中身は見ず、そのまま API に渡す） */
 export type LoginToken = Brand<string, "LoginToken">;
 
+/** セッション ID（API が発行する。Cookie に入れ、API には Authorization: Bearer で渡す） */
+export type SessionId = Brand<string, "SessionId">;
+
 // JWT は base64url の3つの部分を「.」でつないだもの（Cookie の値として安全な文字だけ）
 const LOGIN_TOKEN_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+// セッション ID は乱数の base64url（パディングなし）
+const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{16,256}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function of<T extends string>(name: string, pattern: RegExp) {
@@ -39,4 +44,8 @@ export const RegistrationId = {
 export const LoginToken = {
   of: of<LoginToken>("LoginToken", LOGIN_TOKEN_PATTERN),
   isValid: (value: string) => LOGIN_TOKEN_PATTERN.test(value),
+};
+export const SessionId = {
+  of: of<SessionId>("SessionId", SESSION_ID_PATTERN),
+  isValid: (value: string) => SESSION_ID_PATTERN.test(value),
 };

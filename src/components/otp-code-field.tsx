@@ -14,7 +14,6 @@ type Props = {
 export function OtpCodeField({ error, describedBy }: Props) {
   return (
     <FormField
-      id="code"
       label="6桁のコード"
       hint="コードは30秒ごとに変わります"
       error={fieldErrorMessage("code", error)}
