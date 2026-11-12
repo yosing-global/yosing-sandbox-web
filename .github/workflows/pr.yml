@@ -41,6 +41,7 @@ jobs:
   #   E2E の版は develop（PR 環境の web は develop に入る前のもの。文言などを変える PR は、e2e の develop を先に直す）
   #   e2e は非公開のため、e2e を読む GitHub App のトークンで取ってくる（e2e を一般公開したら、App の2行を消す）
   #   ジョブに environment: を付けない（OIDC の sub が変わり、CI ロールに入れなくなる）
+  #   ロールの ARN は secrets の側で渡す（secret の値はログで最初から伏せられる。with: で渡すとログに元の値が出る）
   e2e:
     needs: deploy
     uses: yosing-global/yosing-sandbox-e2e/.github/workflows/e2e.yml@develop
@@ -50,9 +51,9 @@ jobs:
     with:
       app_env: pr${{ github.event.pull_request.number }}
       e2e_ref: develop
-      aws_role_arn: ${{ vars.AWS_ROLE_ARN }}
       e2e_app_client_id: ${{ vars.E2E_APP_CLIENT_ID }}
     secrets:
+      aws_role_arn: ${{ vars.AWS_ROLE_ARN }}
       e2e_app_private_key: ${{ secrets.E2E_APP_PRIVATE_KEY }}
 
   # PR の Conversation に、PR 環境の URL を出す（コメントは1つだけにし、デプロイのたびに書き換える）
