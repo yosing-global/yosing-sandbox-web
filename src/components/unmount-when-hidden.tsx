@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useLayoutEffect, useState } from "react";
+import { type ReactNode, Suspense, useLayoutEffect, useState } from "react";
 
 // 画面から離れたら、中身を DOM から外す（ログイン中の画面に使う）
 //   Cache Components では、離れた画面を隠して残す（<Activity>）。ログアウトした後も、隠れた画面に
@@ -15,5 +15,9 @@ export function UnmountWhenHidden({ children }: { children: ReactNode }) {
     setVisible(true);
     return () => setVisible(false);
   }, []);
-  return visible ? children : null;
+  // 中身は、ここで Suspense で囲む（外側の Suspense に suspend を届かせない）
+  //   出直したときに中身のデータがまだ届いていないと、中身が suspend する。layout effect の中の更新は同期の更新のため、
+  //   外側の Suspense が待ちの表示になると、この部品も隠れて後片付け（中身を外す）が動き、また出直す…を繰り返す
+  //   （React の誤り #185。Maximum update depth exceeded）
+  return visible ? <Suspense>{children}</Suspense> : null;
 }
