@@ -58,11 +58,13 @@ jobs:
     steps:
       # ロールの ARN・レジストリは Secrets に置く（Secrets の値は、どのステップのログでも最初から伏せられる。
       #   Variables だと、伏せる前のステップの env の表示に元の値が出る）。ここでは、アカウント ID だけが出る場面
-      #   （AWS CLI・docker の出力等）のために、レジストリの先頭（アカウント ID）を伏せる
+      #   （AWS CLI・docker の出力等）のために、アカウント ID（ロールの ARN の NonProd と、レジストリの先頭の Shared-Infra）を伏せる
       - name: 値の伏せ字
         env:
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
           ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
         run: |
+          echo "::add-mask::$(echo "${AWS_ROLE_ARN}" | cut -d: -f5)"
           echo "::add-mask::${ECR_REGISTRY%%.*}"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
