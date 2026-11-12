@@ -71,7 +71,7 @@ sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）�
 
 - 入力欄には必ず `<label>` を付ける。アイコンだけのボタンには `aria-label` を付ける（例：「パスワードを表示」）。
 - お知らせの枠には `role="alert"`（赤）・`role="status"`（青）を付ける。入力欄の下の誤りは `aria-describedby` で入力欄に結びつける。
-  - Next.js が画面の移動を読み上げる部品（`next-route-announcer`。shadow DOM の中）も `role="alert"` を持つ。Playwright は shadow DOM の中も探すため、E2E では `main` の中に絞って探す（例：`page.locator("main").getByRole("alert")`）。
+  - Next.js が画面の移動を読み上げる部品（`next-route-announcer`。shadow DOM の中）も `role="alert"` を持つ。Playwright は shadow DOM の中も探すため、E2E では `main` の中に絞って探す（例：`page.getByRole("main").getByRole("alert")`。`locator("main")` は隠れて残る画面の `main` にも当たるため、`getByRole` を使う）。
   - 離れた画面は隠して残る（下の「離れた画面は消えずに残る」）。Playwright の `getByLabel` は隠れた要素も探すため、ログイン → 新規登録のように同じラベルの画面を行き来すると、2つに当たる。E2E では見えているものに絞る（例：`page.getByLabel("ログイン ID").filter({ visible: true })`）。`getByRole` は隠れた要素を除くので、そのままでよい。
 - 入力欄の `id` は固定にしない（`FormField` が `useId` で作る）。隠れて残った画面の入力欄と同じ `id` になると、ラベルが隠れた入力欄を指してしまう。
 - ステップ表示の今のステップに `aria-current="step"` を付ける。
@@ -227,11 +227,11 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 
 `../yosing-sandbox-api` の `.github/workflows`・`deploy/`・CLAUDE.md の「nonprod へのデプロイ」を手本にした。手順を直すときは、api とそろえるかも考える。
 
-- ワークフロー：契機ごとのファイルが、共通の手順（ファイル名の先頭が `_`）を呼ぶ。手順を直すときは `_build.yml` / `_deploy.yml` の1か所だけを直す。E2E ができたら、`e2e` のジョブを後ろに足す。
+- ワークフロー：契機ごとのファイルが、共通の手順（ファイル名の先頭が `_`）を呼ぶ。手順を直すときは `_build.yml` / `_deploy.yml` の1か所だけを直す。E2E は、`yosing-sandbox-e2e` の再利用できるワークフロー（`e2e.yml`）を、デプロイの後ろの `e2e` のジョブから呼ぶ（下の「E2E」）。
 
 | ファイル | 契機 | 内容 |
 | :--- | :--- | :--- |
-| `pr.yml` | PR（作成・更新） | `_build` → `_deploy`（`pr<番号>`、`dev-api` を呼ぶ）→ PR へのコメント |
+| `pr.yml` | PR（作成・更新） | `_build` → `_deploy`（`pr<番号>`、`dev-api` を呼ぶ）→ `e2e`（e2e の `e2e.yml@develop`）・PR へのコメント |
 | `develop.yml` | develop へのマージ | `_build` → `_deploy`（`dev`）と `_deploy`（`test`）を並べて動かす |
 | `pr-cleanup.yml` | PR を閉じたとき | PR 環境の削除（ECS のサービス・Cloud Map のサービス・稼働時間のスケジュール） |
 | `_build.yml` | 呼ばれる側 | `check`（`npm run check`・`npm run build`）→ `image`（Dockerfile で arm64 のイメージを作って push。タグを返す） |
@@ -239,6 +239,12 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 
   - `concurrency`：`pr.yml` と `pr-cleanup.yml` は `pr-<番号>` のグループ（新しい実行が古い実行を止める）。`develop.yml` は止めずに順番に流す。
   - PR の Conversation に、PR 環境の URL をコメントで出す（`.github/scripts/pr-env-comment.sh`。api と同じもの）。
+- E2E（2026-11-12 に `pr.yml` に足した）：
+  - 呼ぶ E2E の版は、その環境にデプロイされている web の版に合わせる。PR 環境・dev・test は `@develop`、stg は `@main`（e2e も develop と main で運用する）。入力の `e2e_ref` も `uses` の `@` の後ろと同じにする。
+  - `develop.yml`（test）には、test 環境のロック（web と api のデプロイ・E2E を直列にする。`aws-infra-env` の DynamoDB）と一緒に足す（手順は e2e の CLAUDE.md の手順 8）。
+  - e2e は一般公開まで非公開のため、e2e を読む GitHub App のトークンで取ってくる。Variables に `E2E_APP_CLIENT_ID`、Secrets に `E2E_APP_PRIVATE_KEY`。e2e を一般公開したら、`pr.yml` の App の2行と、この2つを消す。
+  - 文言・部品の名前を変える PR は、e2e の develop を先に直す（PR 環境の E2E は e2e の develop で流れるため）。e2e の PR と、PR の「他リポジトリ・手作業」で紐づける。
+  - 失敗したときの HTML のレポート（トレース・スクリーンショット）は、この PR の Actions の成果物 `e2e-report-<環境>-<試行の回数>` に7日残る。
 - タスク定義の環境変数：`APP_ENV`（`dev` / `test` / `pr<番号>`）、`API_BASE_URL`（`http://<API_ENV>-api.sandbox.internal:8080`。`API_ENV` は dev / test、PR 環境は dev）。web のタスクロールはアプリの環境で共有するため、api の `ROLE_ENV` に当たるものは無い。
 - タスクのサイズ：0.25 vCPU / 0.5GB（Fargate の最小。足りなければ上げる）。
 - AWS への認証は GitHub の OIDC。CI ロールは NonProd の `github-actions-sandbox-web-role`（引き受けられるのは `pull_request` と develop ブランチ）。ジョブに `environment:` を付けない（OIDC の `sub` が変わり、信頼ポリシーに合わなくなる）。
