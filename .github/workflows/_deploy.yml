@@ -35,21 +35,22 @@ jobs:
       contents: read
       id-token: write
     steps:
-      # ecspresso の差分の表示等で、ロールの ARN・イメージの URL がログに出るため伏せる
+      # ロールの ARN・レジストリは Secrets に置く（Secrets の値は、どのステップのログでも最初から伏せられる。
+      #   Variables だと、伏せる前のステップの env の表示に元の値が出る）。ここでは、アカウント ID だけが出る場面
+      #   （ecspresso の差分・AWS CLI の出力等）のために、アカウント ID（ロールの ARN の NonProd と、レジストリの先頭の Shared-Infra）を伏せる
       - name: 値の伏せ字
         env:
-          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
-          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
         run: |
-          echo "::add-mask::${AWS_ROLE_ARN}"
-          echo "::add-mask::${ECR_REGISTRY}"
+          echo "::add-mask::$(echo "${AWS_ROLE_ARN}" | cut -d: -f5)"
           echo "::add-mask::${ECR_REGISTRY%%.*}"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           mask-aws-account-id: true
 
@@ -83,7 +84,7 @@ jobs:
       #   --tasks 1：稼働時間の外（スケジュールで 0 になっている）にデプロイしても起動させる（次の 1:00 に 0 に戻る）
       - name: デプロイ
         env:
-          IMAGE: ${{ vars.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ inputs.image_tag }}
+          IMAGE: ${{ secrets.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ inputs.image_tag }}
         run: ecspresso deploy --config deploy/ecspresso.jsonnet --tasks 1
 
       # 稼働時間（9:00〜翌 1:00、日本時間）。それ以外はタスクを 0 にする
@@ -114,18 +115,20 @@ jobs:
       SSM_PLUGIN_VERSION: 1.2.896.0
       SSM_PLUGIN_SHA256: 53f51fcc67314a4bf85888a38a3967cd41f8d0f28a60a9469a63acf935ba713e
     steps:
+      # ロールの ARN・レジストリは Secrets に置く（Secrets の値は、どのステップのログでも最初から伏せられる。
+      #   Variables だと、伏せる前のステップの env の表示に元の値が出る）。ここでは、アカウント ID だけが出る場面
+      #   （ecspresso の差分・AWS CLI の出力等）のために、アカウント ID（ロールの ARN の NonProd と、レジストリの先頭の Shared-Infra）を伏せる
       - name: 値の伏せ字
         env:
-          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
-          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
         run: |
-          echo "::add-mask::${AWS_ROLE_ARN}"
-          echo "::add-mask::${ECR_REGISTRY}"
+          echo "::add-mask::$(echo "${AWS_ROLE_ARN}" | cut -d: -f5)"
           echo "::add-mask::${ECR_REGISTRY%%.*}"
 
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           mask-aws-account-id: true
 

@@ -56,14 +56,15 @@ jobs:
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
     steps:
-      # 公開リポジトリでは Actions のログも公開されるため、アカウント ID・ロールの ARN・レジストリをログに出さない
+      # ロールの ARN・レジストリは Secrets に置く（Secrets の値は、どのステップのログでも最初から伏せられる。
+      #   Variables だと、伏せる前のステップの env の表示に元の値が出る）。ここでは、アカウント ID だけが出る場面
+      #   （AWS CLI・docker の出力等）のために、アカウント ID（ロールの ARN の NonProd と、レジストリの先頭の Shared-Infra）を伏せる
       - name: 値の伏せ字
         env:
-          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
-          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
         run: |
-          echo "::add-mask::${AWS_ROLE_ARN}"
-          echo "::add-mask::${ECR_REGISTRY}"
+          echo "::add-mask::$(echo "${AWS_ROLE_ARN}" | cut -d: -f5)"
           echo "::add-mask::${ECR_REGISTRY%%.*}"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,14 +76,14 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           mask-aws-account-id: true
 
       # ECR は Shared-Infra にある。NonProd の CI ロールのトークンで、リポジトリポリシーにより push できる
       - name: ECR へのログイン
         env:
-          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
         run: aws ecr get-login-password | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -92,7 +93,7 @@ jobs:
       #   Dockerfile のビルドの段はランナーの CPU（x86）で動き、実行の段だけ arm64 になる（エミュレーションしない）
       - name: イメージのビルドと push（arm64）
         env:
-          IMAGE: ${{ vars.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.tag }}
+          IMAGE: ${{ secrets.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.tag }}
         run: |
           if docker buildx imagetools inspect "${IMAGE}" > /dev/null 2>&1; then
             echo "同じタグのイメージがあるため、push しない"

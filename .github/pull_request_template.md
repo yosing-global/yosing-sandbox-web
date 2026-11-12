@@ -29,7 +29,7 @@
 - [ ] パスワード・コード・TOTP の秘密情報・設定 URI・セッション ID・仮認証 JWT・Cookie をログや画面のエラーに出していない
 - [ ] API の URL・セッション ID・仮認証 JWT をブラウザーの JavaScript に渡していない（API はサーバー側からだけ呼ぶ）
 - [ ] `NEXT_PUBLIC_*` に環境ごとの値を入れていない
-- [ ] アカウント ID・ロールの ARN・ECR の URL をファイルに書いていない（GitHub の Variables・SSM パラメータを使う）
+- [ ] アカウント ID・ロールの ARN・ECR の URL をファイルに書いていない（GitHub の Secrets・SSM パラメータを使う。Variables に置くとログに出る）
 - [ ] 入力欄にラベル、アイコンだけのボタンに `aria-label`、お知らせの枠に `role` を付けた（画面を変えていない場合もチェック）
 - [ ] 必要に応じて README.md / CLAUDE.md / Notion の設計を更新した
 

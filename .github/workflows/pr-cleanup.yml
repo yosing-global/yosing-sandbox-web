@@ -34,18 +34,20 @@ jobs:
     env:
       APP_ENV: pr${{ github.event.pull_request.number }}
     steps:
+      # ロールの ARN・レジストリは Secrets に置く（Secrets の値は、どのステップのログでも最初から伏せられる。
+      #   Variables だと、伏せる前のステップの env の表示に元の値が出る）。ここでは、アカウント ID だけが出る場面
+      #   （ecspresso の差分・AWS CLI の出力等）のために、アカウント ID（ロールの ARN の NonProd と、レジストリの先頭の Shared-Infra）を伏せる
       - name: 値の伏せ字
         env:
-          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
-          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
         run: |
-          echo "::add-mask::${AWS_ROLE_ARN}"
-          echo "::add-mask::${ECR_REGISTRY}"
+          echo "::add-mask::$(echo "${AWS_ROLE_ARN}" | cut -d: -f5)"
           echo "::add-mask::${ECR_REGISTRY%%.*}"
 
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           mask-aws-account-id: true
 
