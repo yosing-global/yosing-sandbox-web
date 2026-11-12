@@ -248,7 +248,10 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 - タスク定義の環境変数：`APP_ENV`（`dev` / `test` / `pr<番号>`）、`API_BASE_URL`（`http://<API_ENV>-api.sandbox.internal:8080`。`API_ENV` は dev / test、PR 環境は dev）。web のタスクロールはアプリの環境で共有するため、api の `ROLE_ENV` に当たるものは無い。
 - タスクのサイズ：0.25 vCPU / 0.5GB（Fargate の最小。足りなければ上げる）。
 - AWS への認証は GitHub の OIDC。CI ロールは NonProd の `github-actions-sandbox-web-role`（引き受けられるのは `pull_request` と develop ブランチ）。ジョブに `environment:` を付けない（OIDC の `sub` が変わり、信頼ポリシーに合わなくなる）。
-- アカウント ID・ロールの ARN・ECR の URL はファイルに書かず、GitHub の Variables（`AWS_ROLE_ARN`・`ECR_REGISTRY`）に置き、ワークフローの最初に `::add-mask::` で伏せる。
+- アカウント ID・ロールの ARN・ECR の URL はファイルに書かず、GitHub の **Secrets**（`AWS_ROLE_ARN`・`ECR_REGISTRY`）に置く。Secrets の値は、どのステップのログでも最初から伏せられる。Variables に置くと、`::add-mask::` を行うステップ自身の `env:` の表示に元の値が出る（2026-11-12 に気づき、Variables から Secrets に移した）。
+  - `_build.yml`・`_deploy.yml` を呼ぶときは `secrets: inherit` で Secrets を引き継ぐ。e2e の `e2e.yml` には、ロールの ARN を `secrets:` の側（`aws_role_arn`）で渡す。
+  - アカウント ID だけが出る場面（AWS CLI・ecspresso の出力等）のために、各ジョブの最初に、レジストリの先頭（アカウント ID）を `::add-mask::` で伏せる。
+  - Secrets に移す前の実行のログには、元の値が残っている。一般公開するときの作業の一環で、Actions の古い実行のログを消す（2026-11-12 に決定）。
 - デプロイは ecspresso。値は SSM パラメータから読む（`/products/sandbox/ecs/*`、`/products/sandbox/cloud-map/namespace-id`、`/products/sandbox/web/task-role-arn`、`/products/sandbox/web/security-group-id`、`/products/sandbox/web/log-group-name`、`/infra-env/network/private-subnet-ids`）。
 - 名前：ECS のサービス・Cloud Map のサービスは `<env>-web`、タスク定義のファミリーは `sandbox-<env>-web`、ロググループは `/sandbox/nonprod/web`（ログストリームの先頭を `<env>/`）。
 - イメージは1コミットにつき1つ。環境の違いはタスク定義の環境変数だけ（ビルドの時に環境ごとの値を埋め込まない。Next.js の `NEXT_PUBLIC_*` に環境ごとの値を入れない）。

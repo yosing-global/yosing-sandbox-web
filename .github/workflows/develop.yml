@@ -19,6 +19,7 @@ concurrency:
 jobs:
   build:
     uses: ./.github/workflows/_build.yml
+    secrets: inherit
     permissions:
       contents: read
       id-token: write
@@ -26,6 +27,7 @@ jobs:
   deploy-dev:
     needs: build
     uses: ./.github/workflows/_deploy.yml
+    secrets: inherit
     permissions:
       contents: read
       id-token: write
@@ -37,6 +39,7 @@ jobs:
   deploy-test:
     needs: build
     uses: ./.github/workflows/_deploy.yml
+    secrets: inherit
     permissions:
       contents: read
       id-token: write
