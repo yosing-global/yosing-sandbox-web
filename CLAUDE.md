@@ -63,6 +63,7 @@ sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）�
 - API の呼び出しは `callApi`（`src/server/infrastructure/api/api-client.ts`）を通す。想定した失敗（4xx で `code` のあるもの）は結果として返し、想定外（つながらない・5xx 等）は `ApiUnexpectedError` を投げる。ログには操作の名前・状態・`code`・時間だけを出す。
 - お知らせの枠は `Notice`（`src/components/notice.tsx`）を使う（`variant` で `role` が決まる）。shadcn/ui の Alert は `role="alert"` だけのため使わない。
 - **離れた画面は消えずに残る**（Cache Components。React の `<Activity>` で隠して最大3つ残し、入力値・`useState`・`useActionState` の結果も残る）。ログイン・登録のフォームは `ResetWhenHidden`（`src/components/reset-when-hidden.tsx`）で囲み、離れたら作り直す（パスワード・古いお知らせを残さない）。秘密情報を持つ store は、画面から離れたら消す（`registration-store.tsx`）。詳細は `node_modules/next/dist/docs/01-app/02-guides/preserving-ui-state.md`。
+  - 隠れる・出るに合わせる処理は、layout effect の後片付け（隠れるとき）に置く。出直すとき（layout effect の本体）に setState する部品は、その中身を自分の `<Suspense>` で囲む（`UnmountWhenHidden`）。layout effect の中の更新は同期の更新のため、中身が suspend すると外側の `<Suspense>` が待ちの表示になり、部品が隠れる → 後片付け → 出直す…を繰り返して、React の誤り #185（Maximum update depth exceeded）になる（2026-11-12 に E2E で見つけた。`unmount-when-hidden.test.tsx`）。
 - 文言は `src/shared/messages.ts` にまとめる（正は 4.1）。
 - 画像の最適化（sharp）は使わない（`images.unoptimized`）。ビルド（x86）と実行（arm64）で CPU が違うため。
 - `public/robots.txt` で、検索エンジンに載せない（公開しない前提のため）。
