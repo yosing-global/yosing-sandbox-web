@@ -5,6 +5,9 @@ name: pr
 #   PR を閉じたときの PR 環境の削除は pr-cleanup.yml
 on:
   pull_request:
+    # ドキュメント（*.md）だけの変更では動かさない（コードと一緒に変わったときは動く）
+    paths-ignore:
+      - "**.md"
 
 permissions:
   contents: read
