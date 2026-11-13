@@ -86,12 +86,16 @@ BFF の部分（`src/server/`）は、api と同じく、層に分けて依存�
 
 ## ブランチと環境
 
-| 契機 | デプロイ先 |
-| :--- | :--- |
-| Pull Request | PR ごとの環境（PR を閉じると削除。API は dev を使う） |
-| `develop` へのマージ | dev、test |
-| `main` へのマージ | stg |
-| 手動 | prod |
+| 契機 | デプロイ先 | E2E |
+| :--- | :--- | :--- |
+| Pull Request | PR ごとの環境（PR を閉じると削除。API は dev を使う） | PR ごとの環境 |
+| `develop` へのマージ | dev、test | test |
+| `main` へのマージ | stg | stg（stg を作るときに足す） |
+| 手動 | prod | なし |
+
+- E2E は、デプロイとヘルスチェックの後に、[yosing-sandbox-e2e](https://github.com/yosing-global/yosing-sandbox-e2e) の再利用できるワークフローを呼んで流します（Playwright。ブラウザーから web・API・DB をつなげて、登録・ログイン・ログアウトの流れと、画面の文言を確かめる）。シナリオと作りは、e2e の README にあります。
+- test は api の CI も E2E を流します。web と api の間で排他しないため、相手のデプロイの最中に流れて落ちることがあります。そのときは流し直します（自動のやり直し1回、それでも落ちたら手で Re-run）。
+- E2E が作ったテストのユーザー（ログイン ID が `e2e_dummy_` で始まる）は dev・test に溜まり、api の CI が登録から24時間後に消します。
 
 ## ローカルでの開発
 
