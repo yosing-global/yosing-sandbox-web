@@ -239,6 +239,7 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 | `_deploy.yml` | 呼ばれる側 | 1つの環境（入力：`app_env`・`api_env`・`image_tag`）への `deploy` → `verify`（`https://<env>.local.sandbox.yosing.net:8090/api/health` が `UP` になるまで待つ） |
 
   - `concurrency`：`pr.yml` と `pr-cleanup.yml` は `pr-<番号>` のグループ（新しい実行が古い実行を止める）。`develop.yml` は止めずに順番に流す。
+  - ドキュメント（`*.md`）だけの変更では、`pr.yml`・`develop.yml` を動かさない（`paths-ignore`。デプロイ・E2E をし直さないため。コードと一緒に変わったときは動く）。`pr-cleanup.yml` は、PR 環境が無くても通るので、そのまま動かす。必須のチェック（ブランチの保護）を付けると、飛ばした PR がマージできなくなるので、付けるときはこの作りを見直す。
   - PR の Conversation に、PR 環境の URL をコメントで出す（`.github/scripts/pr-env-comment.sh`。api と同じもの）。
 - E2E（2026-11-12 に `pr.yml`、2026-11-13 に `develop.yml` に足した）：
   - 呼ぶ E2E の版は、その環境にデプロイされている web の版に合わせる。PR 環境・dev・test は `@develop`、stg は `@main`（e2e も develop と main で運用する）。入力の `e2e_ref` も `uses` の `@` の後ろと同じにする。
