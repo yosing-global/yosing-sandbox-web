@@ -233,17 +233,17 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 | ファイル | 契機 | 内容 |
 | :--- | :--- | :--- |
 | `pr.yml` | PR（作成・更新） | `_build` → `_deploy`（`pr<番号>`、`dev-api` を呼ぶ）→ `e2e`（e2e の `e2e.yml@develop`）・PR へのコメント |
-| `develop.yml` | develop へのマージ | `_build` → `_deploy`（`dev`）と `_deploy`（`test`）を並べて動かす |
+| `develop.yml` | develop へのマージ | `_build` → `_deploy`（`dev`）と `_deploy`（`test`）を並べて動かす → `e2e`（`test`。e2e の `e2e.yml@develop`） |
 | `pr-cleanup.yml` | PR を閉じたとき | PR 環境の削除（ECS のサービス・Cloud Map のサービス・稼働時間のスケジュール） |
 | `_build.yml` | 呼ばれる側 | `check`（`npm run check`・`npm run build`）→ `image`（Dockerfile で arm64 のイメージを作って push。タグを返す） |
 | `_deploy.yml` | 呼ばれる側 | 1つの環境（入力：`app_env`・`api_env`・`image_tag`）への `deploy` → `verify`（`https://<env>.local.sandbox.yosing.net:8090/api/health` が `UP` になるまで待つ） |
 
   - `concurrency`：`pr.yml` と `pr-cleanup.yml` は `pr-<番号>` のグループ（新しい実行が古い実行を止める）。`develop.yml` は止めずに順番に流す。
   - PR の Conversation に、PR 環境の URL をコメントで出す（`.github/scripts/pr-env-comment.sh`。api と同じもの）。
-- E2E（2026-11-12 に `pr.yml` に足した）：
+- E2E（2026-11-12 に `pr.yml`、2026-11-13 に `develop.yml` に足した）：
   - 呼ぶ E2E の版は、その環境にデプロイされている web の版に合わせる。PR 環境・dev・test は `@develop`、stg は `@main`（e2e も develop と main で運用する）。入力の `e2e_ref` も `uses` の `@` の後ろと同じにする。
-  - `develop.yml`（test）には、test 環境のロック（web と api のデプロイ・E2E を直列にする。`aws-infra-env` の DynamoDB）と一緒に足す（手順は e2e の CLAUDE.md の手順 8）。
-  - e2e は一般公開まで非公開のため、e2e を読む GitHub App のトークンで取ってくる。Variables に `E2E_APP_CLIENT_ID`、Secrets に `E2E_APP_PRIVATE_KEY`。e2e を一般公開したら、`pr.yml` の App の2行と、この2つを消す。
+  - test は api の CI もデプロイ・E2E を流すが、web と api の間で排他しない（2026-11-13 に決定。理由は e2e の CLAUDE.md・Notion の方式設計の 2.5.2）。相手のデプロイと重なって E2E が落ちたら、やり直す（自動のやり直し1回、それでも落ちたら手で Re-run）。
+  - e2e は一般公開まで非公開のため、e2e を読む GitHub App のトークンで取ってくる。Variables に `E2E_APP_CLIENT_ID`、Secrets に `E2E_APP_PRIVATE_KEY`。e2e を一般公開したら、`pr.yml`・`develop.yml` の App の2行と、この2つを消す。
   - 文言・部品の名前を変える PR は、e2e の develop を先に直す（PR 環境の E2E は e2e の develop で流れるため）。e2e の PR と、PR の「他リポジトリ・手作業」で紐づける。
   - 失敗したときの HTML のレポート（トレース・スクリーンショット）は、この PR の Actions の成果物 `e2e-report-<環境>-<試行の回数>` に7日残る。
 - タスク定義の環境変数：`APP_ENV`（`dev` / `test` / `pr<番号>`）、`API_BASE_URL`（`http://<API_ENV>-api.sandbox.internal:8080`。`API_ENV` は dev / test、PR 環境は dev）。web のタスクロールはアプリの環境で共有するため、api の `ROLE_ENV` に当たるものは無い。
