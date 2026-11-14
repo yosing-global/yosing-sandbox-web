@@ -5,6 +5,9 @@ name: pr
 #   PR を閉じたときの PR 環境の削除は pr-cleanup.yml
 on:
   pull_request:
+    # develop 向けの PR だけ（develop → main の PR では PR 環境を作らない。中身は develop で dev・test に出ているものと同じため。main への反映は main.yml で stg に出して確かめる）
+    branches:
+      - develop
     # ドキュメント（*.md）だけの変更では動かさない（コードと一緒に変わったときは動く）
     paths-ignore:
       - "**.md"

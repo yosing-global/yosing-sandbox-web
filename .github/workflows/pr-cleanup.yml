@@ -6,6 +6,9 @@ name: pr-cleanup
 #   PR 環境で登録したユーザー（dev のテーブル）は消さない
 on:
   pull_request:
+    # pr.yml と同じく、develop 向けの PR だけ
+    branches:
+      - develop
     types:
       - closed
 
