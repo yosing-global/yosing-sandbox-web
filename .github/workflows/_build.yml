@@ -1,0 +1,117 @@
+name: build
+
+# 共通（呼ばれる側）：静的チェック・単体テスト・ビルドの確認と、arm64 のイメージの ECR への push
+#   呼ぶ側（pr.yml・develop.yml・main.yml）のジョブで permissions（contents: read、id-token: write）を渡す
+on:
+  workflow_call:
+    inputs:
+      push_image:
+        description: イメージを作って push するか（フォークからの PR では AWS に入れないため false にする）
+        type: boolean
+        default: true
+      tag_prefix:
+        description: タグの先頭に付ける文字（main.yml は main-。stg・prod で使うイメージを、ECR のライフサイクルで別に残すため）
+        type: string
+        default: ""
+    # 呼ぶ側は secrets: inherit（nonprod）か、名前を指定して渡す（main.yml は Stg の値を渡す）
+    secrets:
+      AWS_ROLE_ARN:
+        description: アプリの CI ロールの ARN（環境のアカウント）
+        required: true
+      ECR_REGISTRY:
+        description: ECR のレジストリ（<Shared-Infra のアカウント ID>.dkr.ecr.ap-northeast-1.amazonaws.com）
+        required: true
+    outputs:
+      image_tag:
+        description: push したイメージのタグ（<tag_prefix><コミットのハッシュ>）
+        value: ${{ jobs.image.outputs.tag }}
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ap-northeast-1
+  ECR_REPOSITORY: sandbox/web
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: 依存の導入
+        run: npm ci --no-audit --no-fund
+
+      # 整形の確認・ESLint・型チェック・単体テスト
+      - name: 静的チェック・単体テスト
+        run: npm run check
+
+      # イメージの中でもビルドするが、フォークからの PR（イメージを作らない）でもビルドが通るかを確かめる
+      - name: ビルド
+        run: npm run build
+
+  image:
+    needs: check
+    if: inputs.push_image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      # ロールの ARN・レジストリは Secrets に置く（Secrets の値は、どのステップのログでも最初から伏せられる。
+      #   Variables だと、伏せる前のステップの env の表示に元の値が出る）。ここでは、アカウント ID だけが出る場面
+      #   （AWS CLI・docker の出力等）のために、アカウント ID（ロールの ARN の NonProd と、レジストリの先頭の Shared-Infra）を伏せる
+      - name: 値の伏せ字
+        env:
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+        run: |
+          echo "::add-mask::$(echo "${AWS_ROLE_ARN}" | cut -d: -f5)"
+          echo "::add-mask::${ECR_REGISTRY%%.*}"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # タグはコミットのハッシュ（PR では、PR を develop に取り込んだ状態のコミット。ビルドした中身と一致する）
+      #   main.yml は main-<ハッシュ>（stg と prod で同じイメージを使う）
+      - name: タグ
+        id: meta
+        env:
+          TAG_PREFIX: ${{ inputs.tag_prefix }}
+        run: echo "tag=${TAG_PREFIX}${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      # ECR は Shared-Infra にある。NonProd の CI ロールのトークンで、リポジトリポリシーにより push できる
+      - name: ECR へのログイン
+        env:
+          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+        run: aws ecr get-login-password | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # タグは上書きできない（IMMUTABLE）ため、同じコミットのイメージがあれば作らない（ジョブの再実行等）
+      #   来歴（provenance）・SBOM の添付はしない（1つのマニフェストにして、ECR のライフサイクルで扱いやすくする）
+      #   Dockerfile のビルドの段はランナーの CPU（x86）で動き、実行の段だけ arm64 になる（エミュレーションしない）
+      - name: イメージのビルドと push（arm64）
+        env:
+          IMAGE: ${{ secrets.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.tag }}
+        run: |
+          if docker buildx imagetools inspect "${IMAGE}" > /dev/null 2>&1; then
+            echo "同じタグのイメージがあるため、push しない"
+            exit 0
+          fi
+          docker buildx build --platform linux/arm64 --provenance=false --sbom=false --tag "${IMAGE}" --push .

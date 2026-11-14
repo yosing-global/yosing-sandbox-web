@@ -4,9 +4,11 @@ sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）�
 
 ## 状況（2026-11-07 時点）
 
-- リポジトリは README だけ。Next.js の土台から作る。
-- API は全部のエンドポイントができている（`yosing-sandbox-api`。仕様はその GitHub Wiki と Notion の「4.2 API設計」）。
-- 画面の UI/UX は v0.dev で設計してから実装する（結果は Notion の「4.1 UI/UX設計」に残す）。
+- Next.js の土台ができた（2026-11-07。ヘルスチェック・静的チェック・単体テスト・Dockerfile）。CI・デプロイ（`.github/workflows`・`deploy/`）を作った（2026-11-09。最初の PR で動作を確かめる）。画面・BFF の土台（shadcn/ui・Storybook・Zod・pino、層の骨組みと ESLint の制限、API の呼び出しの共通部分）を作った（2026-11-09）。新規登録の画面（`/register`・`/register/setup`）を作った（2026-11-09）。ログインの画面（`/login`・`/login/verify`）を作った（2026-11-09）。ダッシュボード（`/dashboard`）・ログアウトと、proxy（`src/proxy.ts`。ログイン状態の振り分け・セッションの延長）を作った（2026-11-10。機能・設定のメニューは仮置きで、画面が無いためリンクにしていない）。エラーの画面（500・404）を作った（2026-11-10）。最初の範囲の画面は、これですべて。
+- E2E の設計は Notion の「6. テスト仕様」の「yosing-sandbox-e2e E2Eテスト」。
+- API は全部のエンドポイントができている（`yosing-sandbox-api`。仕様はその GitHub Wiki と Notion の「4.3 API設計」）。
+- 画面の URL と BFF の操作は、Notion の「4.2 画面のURLとBFF」で決めた（2026-11-09）。要点は下の「画面の URL と BFF」。
+- 画面の UI/UX は、Claude Code がキャンバス（claude.ai の Artifact「ログイン画面レイアウト案」 https://claude.ai/artifact/QHTRJ4g4wXWgbEoMo3GGEn ）に描いて決めた（2026-11-07）。要点は下の「画面（UI/UX）」。結果は Notion の「4.1 UI/UX設計」にも残す。
 - nonprod のインフラ（ECR の `sandbox/web`、CI ロール、タスクロール、SG、ロググループ）は準備済み。stg / prod のインフラはまだ無い（最後にまとめて作る）。
 - 作業の順番：web → E2E（`yosing-sandbox-e2e`、Playwright）→ stg / prod のインフラと各アプリの CI の仕上げ。リポジトリ・Wiki の一般公開は、全部を確かめた後の最後。
 
@@ -14,14 +16,68 @@ sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）�
 
 | 項目 | 内容 |
 | :--- | :--- |
-| 言語・フレームワーク | TypeScript、Next.js（App Router を想定。版は土台を作るときに決めて、ここに書く） |
+| 言語・フレームワーク | TypeScript 5、Next.js 16（App Router、Cache Components を有効）、React 19。Node.js 24 |
+| 画面の見た目 | Tailwind CSS 4（色・文字は `src/app/globals.css` に名前を付けて置き、画面では名前で使う。名前は shadcn/ui にそろえる）。部品は shadcn/ui（Radix）。ダークモードは作らない |
+| PC とスマホ | Tailwind のブレークポイント（`md`＝768px 以上を PC）で、CSS だけで切り替える（同じ HTML）。例外は「QR コードを読み取れない場合」の最初の開閉（`matchMedia`）。スマホでは入力欄の文字を 16px 以上にする（iOS の拡大を防ぐ） |
+| 入力の規則 | Zod 4（`src/shared/validation.ts`。API と同じ規則。誤りは種類だけを返し、文言は画面の側） |
+| ログ | pino ＋ `@elastic/ecs-pino-format`（ECS 形式の JSON。api と同じ項目名）。`src/server/logger.ts` |
+| 単体テスト | Vitest ＋ Testing Library（jsdom）。テストのファイルは対象の隣に `*.test.ts(x)` |
+| 静的チェック | ESLint（`eslint-config-next`）・Prettier・型チェック（`tsc`） |
+| 画面モック | Storybook 10（`@storybook/nextjs-vite`）。ストーリーは `mocks/` に置く（イメージに入れない） |
 | 役割 | 画面と BFF。ブラウザーは web とだけ通信し（同じオリジン）、web のサーバー側が VPC の中で API を呼ぶ |
 | 実行環境 | Amazon ECS on AWS Fargate（ARM64、nonprod は Fargate Spot）。コンテナは 8080 で待ち受ける |
 | イメージ | Shared-Infra の ECR `sandbox/web`。linux/arm64。タグはコミットのハッシュ |
 | デプロイ | GitHub Actions ＋ ecspresso（api と同じ作り。下の「CI」） |
 | E2E | 別のリポジトリ `yosing-sandbox-e2e`（Playwright）。web・api の CI から呼ぶ |
 
-- UI のライブラリ・単体テストの道具・静的チェックは、土台を作るときに決めて、ここに書き足す。
+- この Next.js は、Claude の知識より新しい版。コードを書く前に `AGENTS.md`（Next.js が作るファイル。`next dev` が書き直すので消さない）の指示どおり、`node_modules/next/dist/docs/` の該当の文書を読む。
+
+@AGENTS.md
+
+### 手元での開発
+
+| コマンド | 内容 |
+| :--- | :--- |
+| `npm ci` | 依存を入れる |
+| `npm run dev` | 開発サーバー（http://localhost:3000） |
+| `npm run check` | 整形の確認・ESLint・型チェック・単体テストをまとめて動かす（CI の `check` と同じ） |
+| `npm run format` | 整形する |
+| `npm run build` | 本番のビルド（`.next/standalone` に出力） |
+| `npm run storybook` | 画面モック（http://localhost:6006） |
+| `npx shadcn add <部品>` | shadcn/ui の部品を `src/components/ui/` に足す（生成されたままにする） |
+| `docker buildx build --platform linux/arm64 -t sandbox-web:local --load .` | 本番と同じ arm64 のイメージを作る（手元では `docker run --platform linux/arm64 -p 8080:8080 sandbox-web:local`） |
+
+| 場所 | 内容 |
+| :--- | :--- |
+| `src/app/` | ルーティング（画面・Route Handler・Server Action）。`src/app/api/health/route.ts` がヘルスチェック |
+| `src/app/globals.css` | 色・文字の決まり（`:root` の変数と `@theme`） |
+| `src/features/<機能>/` | 機能ごとの画面の部品（`XxxView.tsx`）とコントローラー（`actions.ts`。Server Action） |
+| `src/components/` | 機能をまたぐ画面の部品（お知らせの枠 `notice.tsx` 等）。`ui/` は shadcn/ui |
+| `src/server/` | サーバー側だけ（`import "server-only"`）。`presentation/`・`application/`（`port/`）・`domain/`・`infrastructure/`（`api/` が API の呼び出しの共通部分）・`container.ts`（実装の組み立て）・`config.ts`（環境変数）・`logger.ts` |
+| `src/shared/` | 画面とサーバーの両方で使う（入力の規則・日時の表示） |
+| `mocks/` | Storybook のストーリー |
+| `.env.development` | 手元の開発の設定（`API_BASE_URL=http://localhost:8080`。秘密の値は書かない） |
+| `Dockerfile` | ビルドの段は `$BUILDPLATFORM`（x86 のまま）、実行の段は arm64。実行の段では `RUN` を使わない（エミュレーションが要らないように） |
+
+- 層の依存の向き（domain ← application ← presentation / infrastructure）は、ESLint の `no-restricted-imports` で守らせる（`eslint.config.mjs`）。層をまたぐ import は `@/` から書く（`../` は使えない）。詳細は Notion の「yosing-sandbox-web 内部設計」。
+- API の呼び出しは `callApi`（`src/server/infrastructure/api/api-client.ts`）を通す。想定した失敗（4xx で `code` のあるもの）は結果として返し、想定外（つながらない・5xx 等）は `ApiUnexpectedError` を投げる。ログには操作の名前・状態・`code`・時間だけを出す。
+- お知らせの枠は `Notice`（`src/components/notice.tsx`）を使う（`variant` で `role` が決まる）。shadcn/ui の Alert は `role="alert"` だけのため使わない。
+- **離れた画面は消えずに残る**（Cache Components。React の `<Activity>` で隠して最大3つ残し、入力値・`useState`・`useActionState` の結果も残る）。ログイン・登録のフォームは `ResetWhenHidden`（`src/components/reset-when-hidden.tsx`）で囲み、離れたら作り直す（パスワード・古いお知らせを残さない）。秘密情報を持つ store は、画面から離れたら消す（`registration-store.tsx`）。詳細は `node_modules/next/dist/docs/01-app/02-guides/preserving-ui-state.md`。
+  - 隠れる・出るに合わせる処理は、layout effect の後片付け（隠れるとき）に置く。出直すとき（layout effect の本体）に setState する部品は、その中身を自分の `<Suspense>` で囲む（`UnmountWhenHidden`）。layout effect の中の更新は同期の更新のため、中身が suspend すると外側の `<Suspense>` が待ちの表示になり、部品が隠れる → 後片付け → 出直す…を繰り返して、React の誤り #185（Maximum update depth exceeded）になる（2026-11-12 に E2E で見つけた。`unmount-when-hidden.test.tsx`）。
+- 文言は `src/shared/messages.ts` にまとめる（正は 4.1）。
+- 画像の最適化（sharp）は使わない（`images.unoptimized`）。ビルド（x86）と実行（arm64）で CPU が違うため。
+- `public/robots.txt` で、検索エンジンに載せない（公開しない前提のため）。
+
+### 画面の作りの決まり（E2E が画面の文言で部品を探すため）
+
+- 入力欄には必ず `<label>` を付ける。アイコンだけのボタンには `aria-label` を付ける（例：「パスワードを表示」）。
+- お知らせの枠には `role="alert"`（赤）・`role="status"`（青）を付ける。入力欄の下の誤りは `aria-describedby` で入力欄に結びつける。
+  - Next.js が画面の移動を読み上げる部品（`next-route-announcer`。shadow DOM の中）も `role="alert"` を持つ。Playwright は shadow DOM の中も探すため、E2E では `main` の中に絞って探す（例：`page.getByRole("main").getByRole("alert")`。`locator("main")` は隠れて残る画面の `main` にも当たるため、`getByRole` を使う）。
+  - 離れた画面は隠して残る（下の「離れた画面は消えずに残る」）。Playwright の `getByLabel` は隠れた要素も探すため、ログイン → 新規登録のように同じラベルの画面を行き来すると、2つに当たる。E2E では見えているものに絞る（例：`page.getByLabel("ログイン ID").filter({ visible: true })`）。`getByRole` は隠れた要素を除くので、そのままでよい。
+- 入力欄の `id` は固定にしない（`FormField` が `useId` で作る）。隠れて残った画面の入力欄と同じ `id` になると、ラベルが隠れた入力欄を指してしまう。
+- ステップ表示の今のステップに `aria-current="step"` を付ける。
+- 毎回変わる値（セットアップキー・QR コード）は、ラベル・代替テキストで名前を付ける。`data-testid` は、どれでも探せないときだけ使う。
+- 文言は UI/UX 設計（Notion の「4.1 UI/UX設計」）が正。変えるときは、UI/UX 設計 → E2E → web の順に直す。
 
 ## 関連リポジトリ（`../` に clone 済み）
 
@@ -32,11 +88,11 @@ sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）�
 | `aws-infra-global` | ECR（`sandbox/web`）、アプリの CI ロールの信頼ポリシー、DNS のホストゾーン |
 
 - インフラの詳細（名前・権限・SSM パラメータの一覧・リバースプロキシ）は `../aws-infra-env/README.md` の「sandbox（nonprod）」が正。
-- 本リポジトリでは AWS のリソースを Terraform で作らない（ECS のサービス・タスク定義・Cloud Map のサービス・稼働時間のスケジュールは、本リポジトリの CI が作る）。
+- 本リポジトリでは AWS のリソースを Terraform で作らない（ECS のサービス・タスク定義・Cloud Map のサービスは、本リポジトリの CI が作る）。
 
 ## 設計
 
-Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/UX設計」「4.2 API設計」（Notion MCP で検索できる）。API の外部から見た振る舞いは、`yosing-sandbox-api` の GitHub Wiki（`../yosing-sandbox-api.wiki`）にもまとめてある。
+Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/UX設計」「4.2 画面のURLとBFF」「4.3 API設計」「4.4 DB設計」（Notion MCP で検索できる）。API の外部から見た振る舞いは、`yosing-sandbox-api` の GitHub Wiki（`../yosing-sandbox-api.wiki`）にもまとめてある。
 
 ### 構成
 
@@ -48,41 +104,71 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 - API の呼び出しは、すべてサーバー側（Route Handler・Server Action・Server Component）で行う。API の URL は環境変数で渡す（名前は実装のときに決める。例：`API_BASE_URL`）。
 - web から API への通信は、Cloud Map の名前（`<env>-api.sandbox.internal:8080`）で直接つなぐ（内部 ALB は無い）。
 
-### 画面と API
+### 画面の URL と BFF（詳細は Notion の「4.2 画面のURLとBFF」が正）
 
-| 画面 | 呼ぶ API | 成功したら |
-| :--- | :--- | :--- |
-| 登録（ログイン ID・パスワード） | `POST /v1/registrations` | QR コードとコード入力の画面へ |
-| 登録の確定（QR コード・6桁） | `POST /v1/registrations/{registrationId}/verify` | セッションの Cookie を設定して、ダッシュボードへ |
-| ログイン（ログイン ID・パスワード） | `POST /v1/logins` | 仮認証 JWT を Cookie に保存して、6桁の入力へ |
-| ログインの確定（6桁） | `POST /v1/logins/verify` | 仮認証の Cookie を消し、セッションの Cookie を設定して、ダッシュボードへ |
-| ダッシュボード | `GET /v1/me` | ログイン ID・登録した日時を表示し、セッションの Cookie の期限を延ばす |
-| ログアウト | `DELETE /v1/sessions/current` | セッションの Cookie を消して、ログイン画面へ |
+| URL | 画面 | BFF の操作（種類） | 呼ぶ API | 成功したら |
+| :--- | :--- | :--- | :--- | :--- |
+| `/register` | 新規登録（ステップ1） | `startRegistration`（Server Action） | `POST /v1/registrations` | 登録 ID・QR コード（SVG）・キーをブラウザーの store に入れ、`/register/setup` へ（画面の中だけの移動） |
+| `/register/setup` | 新規登録（ステップ2） | `verifyRegistration`（Server Action） | `POST /v1/registrations/{registrationId}/verify` | セッションの Cookie を設定して、`/dashboard` へ |
+| `/login` | ログイン（ステップ1） | `startLogin`（Server Action） | `POST /v1/logins` | 仮認証の Cookie を設定して、`/login/verify` へ |
+| `/login/verify` | ログイン（ステップ2） | `verifyLogin`（Server Action） | `POST /v1/logins/verify` | 仮認証の Cookie を消し、セッションの Cookie を設定して、`/dashboard` へ |
+| `/dashboard` | ダッシュボード | proxy（開く前） | `GET /v1/me` | セッションの Cookie を延ばし、ログイン ID・登録した日時を画面に渡す |
+| `/dashboard` | ダッシュボード | `logout`（Server Action） | `DELETE /v1/sessions/current` | セッションの Cookie を消して、`/login` へ |
+| `/` | （画面なし） | ― | ― | ログイン中なら `/dashboard`、そうでなければ `/login` |
+| `/api/health` | （ヘルスチェック） | Route Handler | ― | `{"status":"UP"}` |
 
-- 登録の確定の画面に、登録 ID（`registrationId`）をどう渡すか（URL・Cookie 等）は、実装のときに決める。登録 ID だけでは何もできない（コードが要る）が、10分で切れる。
+- BFF の入口：フォームの操作は Server Action（決まった URL は無く、画面の URL への POST）。画面を開く前の振り分けと Cookie の延長は proxy（旧 middleware）。画面から呼ばない入口だけ Route Handler。
+- proxy が `GET /v1/me` で得たユーザーは、要求ヘッダー（`x-sandbox-current-user`）で画面に渡す（`requireCurrentUser`）。ブラウザーが同じ名前のヘッダーを送っても使わないよう、proxy が必ず消してから付ける。
+- Server Action の `redirect("/dashboard")`（登録・ログインの確定）では、Next.js が自分に GET し直すので proxy も動く。ただし、そのときの proxy の `Set-Cookie`（期限の延長）はブラウザーに届かない（発行したばかりの期限のままで、問題はない）。
+- ログイン中の画面は `UnmountWhenHidden` で囲み、離れたら DOM から外す（ログアウトの後、隠れた画面にログイン ID 等を残さない）。ただし `/dashboard` を全体の読み込みで開いた場合、その HTML の `<script>`（Next.js の描画のデータ）には、次の全体の読み込みまで残る。
+- エラーの画面：想定外のエラー（画面の表示・Server Action で投げたもの）は `src/app/error.tsx`、存在しない URL は `src/app/not-found.tsx`、ルートのレイアウトの失敗は `src/app/global-error.tsx`（見た目は `src/components/error-views.tsx`）。「ホームに戻る」は `/` へのふつうのリンク（全体を読み込み直し、proxy がログイン中かどうかで振り分ける）。
+  - proxy の中で投げると Next.js の素の 500 になる。そのため、proxy の `GET /v1/me` が想定外に失敗したら、要求ヘッダー（`x-sandbox-current-user-error`）で画面に伝え、`requireCurrentUser` が投げ直してエラーの画面に出す（Cookie はそのまま）。
+  - 画面の途中から出すエラー（`/dashboard` 等、Suspense の中）は、応答の状態が 200 のまま（Next.js の決まり。表示は 500 の画面）。存在しない URL は 404 を返す。
+- proxy は画面を開くとき（GET・HEAD）だけ振り分ける。Server Action（POST）を移すと画面が応答を読めなくなるため、POST の Cookie の確認はコントローラーで行う（例：`verifyLogin` は仮認証の Cookie が無ければ `/login?notice=expired`）。
+- Server Component（画面の表示）の中では Cookie を書き換えられない（Next.js の決まり）。そのため、`GET /v1/me` のたびの Cookie の延長と、無効なセッションの Cookie の削除は、`/dashboard` を開く前の proxy で行う。
+- **新規登録の設定の値はブラウザーのメモリに持つ**：API には設定 URI（`otpauthUri`）を取り直すエンドポイントが無い（登録 ID だけで取り直せると秘密情報が漏れるため）。そのため、`startRegistration` が返す登録 ID・QR コード・キーを React の store（メモリ）に入れ、`/register/setup` は store から表示する。`sessionStorage` 等には入れない（秘密情報を残さないため）。リロード・URL の直打ちで store が空なら `/register` に戻す（登録をやり直す）。設定 URI そのものはブラウザーに渡さない（BFF で QR コードの SVG にする）。
+- 未ログインの人向けの画面（`/login`・`/register` 等）は、セッションの Cookie があるかだけで「ログイン中」を判断して `/dashboard` に移す（API には問い合わせない）。
+- 別の画面に移したうえでお知らせを出すときは、URL に理由を付ける（`/login?notice=expired`・`retry-later`、`/register?notice=restart`・`taken`）。決まった値だけを受け付ける。リロードしても同じお知らせが出続けるが、許容する。
+- 失敗は「種類」を返し、文言は画面の側で決める（文言は 4.1 が正）。登録の確定で `LOGIN_ID_TAKEN` が出て `/register` に戻ったときは、ログイン ID を入力欄に残さない。
+
+### 画面（UI/UX）
+
+キャンバス（上の「状況」の URL）が正。要点：
+
+- 見た目：白の背景、ポイントの色は青（`#2563EB`）。文字は Noto Sans JP。シンプルにする。
+- ログイン・登録：上にヘッダー（ロゴだけ）、その下にステップ表示（ログインは「1 パスワード → 2 認証コード」、登録は「1 ID・パスワード → 2 認証アプリの設定」）。ステップ1のボタンは「次へ」。ログイン・登録を行き来するリンクは、ボタンの下に区切りの線を引いて置く。
+- 6桁のコード：1つの入力欄（`inputmode="numeric"`・`autocomplete="one-time-code"`）。下に「コードは30秒ごとに変わります」。
+- 登録のパスワード：確認の欄（2回入力）は付けない（表示を切り替えるボタンで確かめる）。
+- 秘密情報（キー）の文字の表示：「QR コードを読み取れない場合」を開くと、キーとコピーのボタンが出る。PC では閉じておき、スマホでは最初から開く（同じ端末の認証アプリでは QR コードを読めないため）。
+- ダッシュボード：ヘッダー（ログイン ID・ログアウト）＋左のメニュー（ホーム／機能／設定）＋中身。機能はあとから足せるように、メニューとホームのカードに1つずつ並べる。スマホではメニューのボタンで開き、ログアウトはメニューの一番下。ログアウトの確認はしない。
+- 日時は日本時間で表示する（例：2026年11月3日 10:25）。
+- お知らせの色：利用者の操作に原因があるものは赤、利用者のせいではないもの（期限切れ）は青。
+- エラーの画面（500・404）：ヘッダーのロゴだけ（ログイン中かどうかに関係なく出せるように）。「ホームに戻る」は、ログイン中ならダッシュボード、そうでなければログイン画面へ。
 
 ### API の要点（詳細は API の Wiki）
 
 - 要求・応答は JSON、項目名は lowerCamelCase、日時は ISO 8601 の UTC。
 - セッション ID は `Authorization: Bearer <sessionId>` で渡す。仮認証 JWT は本文の `loginToken` で渡す（中身は見ない。そのまま渡す）。
-- 期限：仮登録10分、仮認証 JWT 5分、セッションは最終操作から30日（`GET /v1/me` のたびに延びる）・発行から90日の早い方。
+- 期限：仮登録10分、仮認証 JWT 5分、セッションは最終操作から12時間（`GET /v1/me` のたびに延びる）・発行から7日の早い方。
 - 入力の規則：`loginId` は3〜32文字の英字・数字・`_`・`-`（大文字は API が小文字にそろえる）、`password` は12〜64文字の表示できる ASCII、`code` は数字6桁。画面でも同じ規則で先に確かめる（最終的な判定は API）。
 - エラーは Problem Details に `code` が付く。処理は `code` で分け、`detail` の文言には頼らない。
 
-| code | status | 画面での扱い（案。UI/UX 設計で確定する） |
+| code | status | 画面での扱い（UI/UX 設計で決めたもの） |
 | :--- | :--- | :--- |
-| `VALIDATION_FAILED` | 400 | `errors`（`field`・`message`）を項目ごとに表示 |
-| `LOGIN_ID_TAKEN` | 409 | 別のログイン ID を選んでもらう（登録の確定で出たら、登録を最初から） |
-| `OTP_INVALID` | 401 | 再入力。`remainingAttempts`（残りの回数）を表示 |
-| `OTP_ATTEMPTS_EXCEEDED` | 429 | 登録は最初からやり直し。ログインは15分ロック（しばらくしてからやり直す） |
-| `REGISTRATION_NOT_FOUND` | 404 | 期限切れとして、登録を最初から |
-| `INVALID_CREDENTIALS` | 401 | 「ログイン ID かパスワードが違う」。ロック中も同じ応答なので、ロックを示す文言にしない |
-| `LOGIN_TOKEN_INVALID` | 401 | 仮認証の Cookie を消して、ログイン画面へ |
-| `SESSION_INVALID` | 401 | セッションの Cookie を消して、ログイン画面へ |
-| `INTERNAL_ERROR` | 500 | 共通のエラー表示 |
+| `VALIDATION_FAILED` | 400 | `errors`（`field`・`message`）を項目ごとに、入力欄の下に表示 |
+| `LOGIN_ID_TAKEN` | 409 | フォームの上に「このログイン ID は使われています。別の ID にしてください。」。登録の確定で出たら、ステップ1に戻して同じ表示 |
+| `OTP_INVALID` | 401 | 「コードが違います。もう一度入力してください。」と出して再入力。残りの回数（`remainingAttempts`）とロックには触れない |
+| `OTP_ATTEMPTS_EXCEEDED` | 429 | 登録は `REGISTRATION_NOT_FOUND` と同じ表示で最初から。ログインは仮認証の Cookie を消してログイン画面へ戻し、「しばらく時間をおいてから、もう一度ログインしてください。」と出す（「ロック」「15分」とは書かない） |
+| `REGISTRATION_NOT_FOUND` | 404 | 登録のステップ1に戻して「登録を完了できませんでした。最初からやり直してください。」 |
+| `INVALID_CREDENTIALS` | 401 | 「ログイン ID かパスワードが違います。」。ログイン ID は残し、パスワードは空にする。ロック中も同じ応答なので、ロックを示す文言にしない |
+| `LOGIN_TOKEN_INVALID` | 401 | 仮認証の Cookie を消して、ログイン画面へ。青のお知らせ「ログインの有効期限が切れました。もう一度ログインしてください。」（`SESSION_INVALID` と同じ文言） |
+| `SESSION_INVALID` | 401 | セッションの Cookie を消して、ログイン画面へ。青のお知らせ（`LOGIN_TOKEN_INVALID` と同じ文言） |
+| `INTERNAL_ERROR` | 500 | 共通のエラーの画面「エラーが発生しました」（「もう一度試す」「ホームに戻る」）。`detail` などの中身は出さない |
 
+- エラーを出す場所：入力の形式の誤り（画面での事前の確認と `VALIDATION_FAILED`）は、その入力欄の下。それ以外の、送信した結果のエラー（`LOGIN_ID_TAKEN`・`INVALID_CREDENTIALS`・`OTP_INVALID` 等）は、フォームの上のお知らせの枠。
 - ロック：ログインのパスワード・OTP を、それぞれ5回続けて間違えると15分ロック。OTP の回数は、ログインを始め直しても数え続ける。
-- 一度使ったコード（登録や前のログインで使ったもの）は使えない。同じ30秒の間にもう一度ログインすると `OTP_INVALID` になる（次のコードを待つよう案内する）。
+  - BFF がロックを知れるのは、OTP の5回目の失敗で返る 429 `OTP_ATTEMPTS_EXCEEDED` だけ。パスワードでのロック・ロック中のログインの開始は 401 `INVALID_CREDENTIALS` で、ふつうの失敗と区別できない（API がわざと区別させていない）。
+- 一度使ったコード（登録や前のログインで使ったもの）は使えない。同じ30秒の間にもう一度ログインすると `OTP_INVALID` になる。エラーの文言では区別せず、入力欄の下の「コードは30秒ごとに変わります」で案内する。
 - 仮認証はユーザーごとに1つ。別のタブ・端末でログインを始めると、前の仮認証 JWT は `LOGIN_TOKEN_INVALID` になる。
 
 ### Cookie（Notion の「4. 外部設計」の共通方針）
@@ -92,8 +178,9 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 | セッション | API の `sessionId` | `HttpOnly`・`Secure`・`SameSite=Lax`・`Path=/`・`Domain` なし | API が返す `sessionExpiresAt`（発行時と、`GET /v1/me` のたびに延ばす） |
 | 仮認証 | API の `loginToken` | `HttpOnly`・`Secure`・`SameSite=Lax`・`Domain` なし | 5分（API の `expiresAt`） |
 
-- セッションの Cookie の期限は、サーバー側のセッションの期限と同じにする（`Expires` に API の `sessionExpiresAt` をそのまま入れる）。登録の確定・ログインの確定で設定し、`GET /v1/me` に成功するたびに、応答の `sessionExpiresAt` で設定し直す。期限の計算（30日・90日）は BFF でしない（API が正）。
-- Cookie の名前・仮認証の Cookie の `Path` は、実装のときに決める。
+- セッションの Cookie の期限は、サーバー側のセッションの期限と同じにする（`Expires` に API の `sessionExpiresAt` をそのまま入れる）。登録の確定・ログインの確定で設定し、`GET /v1/me` に成功するたびに、応答の `sessionExpiresAt` で設定し直す。期限の計算（12時間・7日）は BFF でしない（API が正）。
+- 名前：セッションは `__Host-session`（`Path=/`）、仮認証は `__Secure-login`（`Path=/login`）。先頭の `__Host-` / `__Secure-` は、ブラウザーに属性を守らせるための印（`__Host-` は `Secure`・`Path=/`・`Domain` なしでないと保存されない。仮認証は `Path=/login` に絞るため `__Secure-`）。名前にプロダクト名は入れない（Cookie はホスト名ごとに分かれ、環境ごとにホスト名が違うため）。
+- Cookie はポート番号では分かれないため、手元の `localhost` では、別のアプリが同じ名前を使うとぶつかることがある（手元だけの話。困ったらブラウザーの Cookie を消す）。
 - ログアウトは、API でセッションを消してから Cookie を消す（API が失敗しても、Cookie は消す）。
 - 認証の前の値を引き継がない：ログインの確定・登録の確定に成功したら、仮認証の Cookie を消して、新しいセッションの Cookie を設定する。
 - 手元（`http://localhost`）では、主なブラウザーは `localhost` を安全な接続として扱うため、`Secure` の Cookie も使える。
@@ -101,47 +188,86 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 ### CSRF
 
 - 状態を変える要求（登録・ログイン・ログアウト）には CSRF の対策をする（`SameSite=Lax` に加えて）。
-- 方法は実装のときに決める。候補：Server Action（Next.js が `Origin` を確かめる）、Route Handler なら `Origin` ヘッダーが自分のオリジンかを確かめる。
+- 状態を変える操作は、すべて Server Action にする（Next.js が `Origin` を確かめる）。Route Handler で状態を変える操作を作る場合は、`Origin` ヘッダーが自分のオリジンかを確かめる。
 - 状態を変える処理を `GET` にしない。
 
 ### 機密情報の扱い
 
 - ログ・エラーの表示・分析ツール等に、パスワード・コード・TOTP の秘密情報・設定 URI（`otpauthUri`）・セッション ID・仮認証 JWT・Cookie を出さない。
 - 設定 URI は秘密情報を含む。QR コードは自分のコード（ライブラリ）で作り、外部の QR コードの生成サービス（URL に値を載せるもの）を使わない。
-- 秘密情報（キー）を文字でも見せるかは、UI/UX 設計で決める（QR コードを読めない人向け）。
+- 秘密情報（キー）は、QR コードを読めない人のために文字でも見せる（見せ方は「画面（UI/UX）」）。画面に出すのは、登録の確定の画面だけ。
 - API の応答の本文を、そのままブラウザーに返さない（必要な項目だけを返す）。
 
 ### API との境目で決めたこと
 
-- **`GET /v1/me` の応答に `sessionExpiresAt` を足す**（2026-11-07 に決定。api の変更はまだ）：セッションは `GET /v1/me` のたびに延びるため、BFF が新しい期限を受け取って Cookie を延ばせるようにする。api の PR（Notion の 4.2・API の Wiki も一緒に直す）が先に要る。
+- **`GET /v1/me` の応答に `sessionExpiresAt` を足す**（2026-11-07 に決定。api のブランチ `feat/me-session-expires-at` で対応。マージされるまでは、api の develop には無い）：セッションは `GET /v1/me` のたびに延びるため、BFF が新しい期限を受け取って Cookie を延ばせるようにする。
+- **セッションの期限を、最終操作から12時間・発行から7日にする**（2026-11-07 に決定。同じ api のブランチで対応）：二要素認証で確かめ直す機会を減らしすぎないため。
 - **web の PR 環境は `dev-api` を呼ぶ**（`dev-api.sandbox.internal:8080`）。web の PR 環境で登録したユーザーは、dev のテーブルに残る。
 
 ## 環境
 
 | 契機 | デプロイ先 |
 | :--- | :--- |
-| PR | PR 環境 `pr<番号>`（PR を閉じたら削除） |
+| develop への PR | PR 環境 `pr<番号>`（PR を閉じたら削除。develop → main の PR では作らない） |
 | develop へのマージ | `dev` と `test` |
-| main へのマージ | `stg`（インフラ未作成） |
+| main へのマージ | `stg` |
 | 手動 | `prod`（インフラ未作成。stg に出したものだけ） |
 
 - nonprod（dev / test / PR 環境）は1つの AWS アカウント（NonProd）を、api と共有する。
 - nonprod の URL は `https://<env>.local.sandbox.yosing.net:8090`（api は `https://<env>.api.local.sandbox.yosing.net:8090`）。SSM のポートフォワーディング（手元の 8090 → リバースプロキシの 443）でつなぐ。手順は `../aws-infra-env/README.md`（API の Wiki の「環境別接続手順」にも同じ手順）。
-- `/healthz` はリバースプロキシ（NGINX）が先に応答するため、web のヘルスチェックには別のパスを使う（例：`/api/health`。実装のときに決める）。
-- nonprod の稼働時間は毎日 9:00〜翌 1:00（JST）。それ以外はタスクが 0 になる。
+- `/healthz` はリバースプロキシ（NGINX）が先に応答するため、web のヘルスチェックは `/api/health`（`{"status":"UP"}`。API には問い合わせない）。
+- nonprod のタスクは、使うときに `aws-infra-env` の `start.yml`（`nonprod`）で起動し、毎日 3:00（JST）に `stop.yml` で止まる（PR 環境も含む。2026-11-14 に、9:00〜翌 1:00 のスケジュールから変えた）。デプロイしたサービスは、止めていても起動する。
 - stg / prod の公開の入口は CloudFront ＋ 外部 ALB ＋ WAF（送信元ごとのレート制限は WAF で行う）。作るのは最後。
+- **prod は、ふだんは消しておく**（公開しない前提）。そのあいだは、メンテナンスのページを出す（2026-11-07 に決めた方針。作るのは stg / prod のインフラのとき）。
+  - ずっと残すもの：Route 53 のレコード・CloudFront・S3（メンテナンスの HTML）・ACM の証明書（us-east-1）。prod の本体（外部 ALB・ECS・WAF 等）とは別の state に置く（例：`aws-infra-env` の `products/sandbox/prod-edge`）。
+  - 切り替え：Terraform の変数（例：`prod_enabled`）で CloudFront の行き先を変える。`false` は、すべてのパスを S3 の `maintenance.html` に向け、503（`Retry-After` 付き）で返す。`true` は ALB に向け、ALB の 502・503・504 のときだけ同じメンテナンスのページを出す。CloudFront のオリジンフェイルオーバーは使わない（POST に効かず、消した ALB を参照し続けるため）。
+  - prod を作るときの順番：本体を作る → 確かめる → 行き先を ALB にする（CloudFront の反映に数分かかる）。メンテナンス中は WAF を外してよい。
+  - メンテナンスのページは Next.js ではなく、1枚の静的な HTML（見た目はキャンバスの「メンテナンス中」）。Terraform で S3 に置く（本リポジトリでは Terraform を使わないため、`aws-infra-env` に置く）。
 
-## CI・デプロイ（api と同じ作りにする）
+## CI・デプロイ（api と同じ作り）
 
-`../yosing-sandbox-api` の `.github/workflows`・`deploy/`・CLAUDE.md の「nonprod へのデプロイ」を手本にする。
+`../yosing-sandbox-api` の `.github/workflows`・`deploy/`・CLAUDE.md の「nonprod へのデプロイ」を手本にした。手順を直すときは、api とそろえるかも考える。
 
-- ワークフロー：契機ごとのファイル（`pr.yml`・`develop.yml`・`pr-cleanup.yml`）が、共通の手順（`_build.yml`・`_deploy.yml`）を呼ぶ。ジョブは `check → image → deploy → verify` の順。E2E ができたら、`e2e` のジョブを後ろに足す。
-- AWS への認証は GitHub の OIDC。CI ロールは NonProd の `github-actions-sandbox-web-role`（引き受けられるのは `pull_request` と develop ブランチ）。ジョブに `environment:` を付けない（OIDC の `sub` が変わり、信頼ポリシーに合わなくなる）。
-- アカウント ID・ロールの ARN・ECR の URL はファイルに書かず、GitHub の Variables（`AWS_ROLE_ARN`・`ECR_REGISTRY`）に置き、ワークフローの最初に `::add-mask::` で伏せる。
-- デプロイは ecspresso。値は SSM パラメータから読む（`/products/sandbox/ecs/*`、`/products/sandbox/cloud-map/namespace-id`、`/products/sandbox/web/task-role-arn`、`/products/sandbox/web/security-group-id`、`/products/sandbox/web/log-group-name`、`/infra-env/network/private-subnet-ids`）。
+- ワークフロー：契機ごとのファイルが、共通の手順（ファイル名の先頭が `_`）を呼ぶ。手順を直すときは `_build.yml` / `_deploy.yml` の1か所だけを直す。E2E は、`yosing-sandbox-e2e` の再利用できるワークフロー（`e2e.yml`）を、デプロイの後ろの `e2e` のジョブから呼ぶ（下の「E2E」）。
+
+| ファイル | 契機 | 内容 |
+| :--- | :--- | :--- |
+| `pr.yml` | develop への PR（作成・更新） | `_build` → `_deploy`（`pr<番号>`、`dev-api` を呼ぶ）→ `e2e`（e2e の `e2e.yml@develop`）・PR へのコメント |
+| `develop.yml` | develop へのマージ | `_build` → `_deploy`（`dev`）と `_deploy`（`test`）を並べて動かす → `e2e`（`test`。e2e の `e2e.yml@develop`） |
+| `pr-cleanup.yml` | PR を閉じたとき | PR 環境の削除（ECS のサービス・Cloud Map のサービス） |
+| `_build.yml` | 呼ばれる側 | `check`（`npm run check`・`npm run build`）→ `image`（Dockerfile で arm64 のイメージを作って push。タグを返す） |
+| `main.yml` | main へのマージ | `_build`（タグは `main-<ハッシュ>`）→ `_deploy`（`stg`、`stg-api` を呼ぶ）。AWS は Stg（Secrets の `AWS_ROLE_ARN_STG`）。E2E は e2e の stg 対応の後に足す |
+| `sync-develop.yml` | main へのマージ | develop を main まで早送りし、履歴をそろえる（GitHub App `yosing-global-sync-develop` のトークンで push。develop に main に無いコミットがあれば警告だけ）。この push では `develop.yml` を動かさない（`build` の `if`）。develop → main の PR は「マージコミット」でマージする（スカッシュ・リベースだと早送りできない） |
+| `_deploy.yml` | 呼ばれる側 | 1つの環境（入力：`app_env`・`api_env`・`image_tag`）への `deploy` → `verify`（確認用のタスクで `http://<env>-web.sandbox.internal:8080/api/health` が `UP` になるまで待つ） |
+
+  - `concurrency`：`pr.yml` と `pr-cleanup.yml` は `pr-<番号>` のグループ（新しい実行が古い実行を止める）。`develop.yml` は止めずに順番に流す。
+  - ドキュメント（`*.md`）だけの変更では、`pr.yml`・`develop.yml` を動かさない（`paths-ignore`。デプロイ・E2E をし直さないため。コードと一緒に変わったときは動く）。`pr-cleanup.yml` は、PR 環境が無くても通るので、そのまま動かす。必須のチェック（ブランチの保護）を付けると、飛ばした PR がマージできなくなるので、付けるときはこの作りを見直す。
+  - PR の Conversation に、PR 環境の URL をコメントで出す（`.github/scripts/pr-env-comment.sh`。api と同じもの）。
+  - 環境名では分岐しない。環境の違いは SSM パラメータ（値・有無）で決める。
+    - deploy の最初に `/infra-env/status/running` を読み、`true` でなければ（stg / prod を止めている）失敗にする（nonprod は常に `true`）。
+    - `/products/sandbox/web/static-bucket-name` があれば（stg / prod）、イメージから `.next/static` を取り出し（`docker create`。動かさない）、S3 の `_next/static/` に置く（デプロイの前。古いファイルは消さない。CloudFront が `/_next/static/*` を S3 から返す）。
+    - `/products/sandbox/web/target-group-arn` があれば（stg / prod）、service-def に ALB への登録（`loadBalancers`）を足す（環境変数 `TARGET_GROUP_ARN`）。
+  - verify：確認用のタスク（`.github/scripts/verify-task.sh`。api と同じファイル）を ECS で一度だけ動かし、VPC の中から `http://<env>-web.sandbox.internal:8080/api/health` が `UP` になるまで待つ。全環境で同じ経路で、リバースプロキシや ALB に依存しない。
+    - タスク定義 `sandbox-<env>-web-verify`（CI が毎回登録する。タスクロールなし）。イメージは ECR Public の `amazonlinux:2023`（curl が入っている。digest で固定）。SG は `/products/sandbox/verify/security-group-id`。ログはロググループの `<env>-verify/verify/<タスク ID>`。上限10分で、過ぎたら止めて失敗にする。
+  - 起動のしかた（Fargate Spot）は service-def に書かず、クラスターの既定に従う（`aws-infra-env` が決める）。
+- E2E（2026-11-12 に `pr.yml`、2026-11-13 に `develop.yml` に足した）：
+  - 呼ぶ E2E の版は、その環境にデプロイされている web の版に合わせる。PR 環境・dev・test は `@develop`、stg は `@main`（e2e も develop と main で運用する）。入力の `e2e_ref` も `uses` の `@` の後ろと同じにする。
+  - test は api の CI もデプロイ・E2E を流すが、web と api の間で排他しない（2026-11-13 に決定。理由は e2e の CLAUDE.md・Notion の方式設計の 2.5.2）。相手のデプロイと重なって E2E が落ちたら、やり直す（自動のやり直し1回、それでも落ちたら手で Re-run）。
+  - e2e は一般公開まで非公開のため、e2e を読む GitHub App のトークンで取ってくる。Variables に `E2E_APP_CLIENT_ID`、Secrets に `E2E_APP_PRIVATE_KEY`。e2e を一般公開したら、`pr.yml`・`develop.yml` の App の2行と、この2つを消す。
+  - 文言・部品の名前を変える PR は、e2e の develop を先に直す（PR 環境の E2E は e2e の develop で流れるため）。e2e の PR と、PR の「他リポジトリ・手作業」で紐づける。
+  - 失敗したときの HTML のレポート（トレース・スクリーンショット）は、この PR の Actions の成果物 `e2e-report-<環境>-<試行の回数>` に7日残る。
+- タスク定義の環境変数：`APP_ENV`（`dev` / `test` / `pr<番号>`）、`API_BASE_URL`（`http://<API_ENV>-api.sandbox.internal:8080`。`API_ENV` は dev / test、PR 環境は dev）。web のタスクロールはアプリの環境で共有するため、api の `ROLE_ENV` に当たるものは無い。
+- タスクのサイズ：0.25 vCPU / 0.5GB（Fargate の最小。足りなければ上げる）。
+- AWS への認証は GitHub の OIDC。CI ロールは NonProd の `github-actions-sandbox-web-role`（引き受けられるのは `pull_request` と develop ブランチ）。Stg にも同じ名前のロールがあり、引き受けられるのは main ブランチだけ（`main.yml`）。ジョブに `environment:` を付けない（OIDC の `sub` が変わり、信頼ポリシーに合わなくなる）。
+- アカウント ID・ロールの ARN・ECR の URL はファイルに書かず、GitHub の **Secrets**（`AWS_ROLE_ARN`・`ECR_REGISTRY`・`AWS_ROLE_ARN_STG`（Stg の CI ロールの ARN））に置く（prod は Environment `prod` の Secrets に置く予定）。Secrets の値は、どのステップのログでも最初から伏せられる。Variables に置くと、`::add-mask::` を行うステップ自身の `env:` の表示に元の値が出る（2026-11-12 に気づき、Variables から Secrets に移した）。
+  - `_build.yml`・`_deploy.yml` を呼ぶときは `secrets: inherit` で Secrets を引き継ぐ（nonprod）。両方とも、使う Secrets（`AWS_ROLE_ARN`・`ECR_REGISTRY`）を宣言していて、`main.yml` は `AWS_ROLE_ARN` に `AWS_ROLE_ARN_STG` を名前で渡す。e2e の `e2e.yml` には、ロールの ARN を `secrets:` の側（`aws_role_arn`）で渡す。
+  - アカウント ID だけが出る場面（AWS CLI・ecspresso の出力等）のために、各ジョブの最初に、アカウント ID（ロールの ARN から取り出す NonProd と、レジストリの先頭の Shared-Infra）を `::add-mask::` で伏せる（`configure-aws-credentials` の `mask-aws-account-id` は、そのステップより後しか伏せないため）。
+  - Secrets に移す前の実行のログには、元の値が残っている。一般公開するときの作業の一環で、Actions の古い実行のログを消す（2026-11-12 に決定）。
+- イメージのタグ：PR / develop はコミットのハッシュ、main は `main-<ハッシュ>`（stg と prod で同じイメージを使う。ECR のライフサイクルで、`main-` は直近の10個を別に残す）。
+- デプロイは ecspresso。値は SSM パラメータから読む（`/products/sandbox/ecs/*`、`/products/sandbox/cloud-map/namespace-id`、`/products/sandbox/web/task-role-arn`、`/products/sandbox/web/security-group-id`、`/products/sandbox/web/log-group-name`、`/infra-env/network/private-subnet-ids`）。CI は、ほかに `/infra-env/status/running`、`/products/sandbox/verify/security-group-id`、`/products/sandbox/web/target-group-arn`・`/products/sandbox/web/static-bucket-name`（stg / prod だけ）を読む。
 - 名前：ECS のサービス・Cloud Map のサービスは `<env>-web`、タスク定義のファミリーは `sandbox-<env>-web`、ロググループは `/sandbox/nonprod/web`（ログストリームの先頭を `<env>/`）。
 - イメージは1コミットにつき1つ。環境の違いはタスク定義の環境変数だけ（ビルドの時に環境ごとの値を埋め込まない。Next.js の `NEXT_PUBLIC_*` に環境ごとの値を入れない）。
-- イメージは linux/arm64。x86 のランナーでエミュレーションなしに作れる形にする（api の Dockerfile は `--platform=$BUILDPLATFORM` で層に分ける段を動かしている。Next.js では、ビルドの段を `$BUILDPLATFORM` で動かし、実行の段だけ arm64 にする形を検討する）。
+- イメージは linux/arm64。Dockerfile のビルドの段を `$BUILDPLATFORM`（x86 のランナー）で動かし、実行の段だけ arm64 にする（エミュレーションしない）。CI の `image` のジョブも、この Dockerfile でビルドする（手元と同じ作り方）。
 - CI で AccessDenied が出たら、CI ロールの権限（`aws-infra-env` の `products/sandbox/nonprod/iam.tf`）を直す。
 
 ## git
@@ -156,4 +282,4 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 - やり取り・コードのコメント・ドキュメントは日本語。
 - AWS のリソースを変える操作（作成・削除）は、CI 経由かユーザーの確認のうえで行う。
 - Norton の TLS 検査で、Claude のシェルからの通信（npm のパッケージのダウンロード等）が証明書のエラーで失敗することがある。その場合は、ユーザーに PowerShell で実行してもらうコマンドを示す。
-- API の仕様を変える必要が出たら、web で回避せず、api のリポジトリで直す（API の Wiki と Notion の 4.2 も一緒に直す）。
+- API の仕様を変える必要が出たら、web で回避せず、api のリポジトリで直す（API の Wiki と Notion の 4.3 も一緒に直す）。

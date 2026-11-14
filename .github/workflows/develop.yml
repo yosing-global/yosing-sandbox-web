@@ -1,0 +1,73 @@
+name: develop
+
+# develop へのマージ：ビルド（イメージの push）→ dev と test へのデプロイ・ヘルスチェック（並べて動かす）→ test に E2E
+#   dev は dev-api を、test は test-api を呼ぶ
+#   test は api の CI もデプロイ・E2E を流すが、web と api の間で排他しない（重なって落ちたらやり直す。e2e の CLAUDE.md）
+on:
+  push:
+    branches:
+      - develop
+    # ドキュメント（*.md）だけの変更では動かさない（コードと一緒に変わったときは動く）
+    paths-ignore:
+      - "**.md"
+
+permissions:
+  contents: read
+
+# 止めずに順番に流す（デプロイを途中で止めない。待っている実行は最新の1つだけ残る）
+concurrency:
+  group: develop
+  cancel-in-progress: false
+
+jobs:
+  # sync-develop.yml が develop を main まで早送りした push では動かさない（中身は develop で確かめ済み。dev・test へのデプロイをし直さない）
+  #   後ろのジョブは、このジョブを needs で待つため、一緒に飛ばされる
+  build:
+    if: github.actor != 'yosing-global-sync-develop[bot]'
+    uses: ./.github/workflows/_build.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      id-token: write
+
+  deploy-dev:
+    needs: build
+    uses: ./.github/workflows/_deploy.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      app_env: dev
+      api_env: dev
+      image_tag: ${{ needs.build.outputs.image_tag }}
+
+  deploy-test:
+    needs: build
+    uses: ./.github/workflows/_deploy.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      app_env: test
+      api_env: test
+      image_tag: ${{ needs.build.outputs.image_tag }}
+
+  # test に E2E を流す（yosing-sandbox-e2e の再利用できるワークフロー。pr.yml の e2e と同じ形）
+  #   E2E の版は develop（test の web は develop のもの）
+  #   ジョブに environment: を付けない（OIDC の sub が変わり、CI ロールに入れなくなる）
+  #   ロールの ARN は secrets の側で渡す（secret の値はログで最初から伏せられる）
+  e2e:
+    needs: deploy-test
+    uses: yosing-global/yosing-sandbox-e2e/.github/workflows/e2e.yml@develop
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      app_env: test
+      e2e_ref: develop
+      e2e_app_client_id: ${{ vars.E2E_APP_CLIENT_ID }}
+    secrets:
+      aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}
+      e2e_app_private_key: ${{ secrets.E2E_APP_PRIVATE_KEY }}

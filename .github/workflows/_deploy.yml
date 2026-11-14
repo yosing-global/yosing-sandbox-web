@@ -1,0 +1,178 @@
+name: deploy
+
+# 共通（呼ばれる側）：1つの環境へのデプロイ（Cloud Map のサービスを含む）と、ヘルスチェック（確認用のタスク）
+#   環境名では分岐しない。環境の違いは SSM パラメータ（値・有無）で決まる
+#     web/target-group-arn があれば ALB に登録する、web/static-bucket-name があれば静的ファイルを S3 に置く（どちらも stg / prod だけにある）
+#   呼ぶ側（pr.yml・develop.yml・main.yml）のジョブで permissions（contents: read、id-token: write）を渡す
+on:
+  workflow_call:
+    inputs:
+      app_env:
+        description: アプリの環境（dev / test / pr<番号> / stg）。サービス・タスク定義・ログ・URL の名前に使う
+        type: string
+        required: true
+      api_env:
+        description: 呼ぶ API の環境（dev / test / stg。PR 環境は dev-api を呼ぶ）
+        type: string
+        required: true
+      image_tag:
+        description: デプロイするイメージのタグ（_build.yml の出力）
+        type: string
+        required: true
+    # 呼ぶ側は secrets: inherit（nonprod）か、名前を指定して渡す（main.yml は Stg の値を渡す）
+    secrets:
+      AWS_ROLE_ARN:
+        description: アプリの CI ロールの ARN（環境のアカウント）
+        required: true
+      ECR_REGISTRY:
+        description: ECR のレジストリ（<Shared-Infra のアカウント ID>.dkr.ecr.ap-northeast-1.amazonaws.com）
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ap-northeast-1
+  ECR_REPOSITORY: sandbox/web
+  APP_ENV: ${{ inputs.app_env }}
+  API_ENV: ${{ inputs.api_env }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # ロールの ARN・レジストリは Secrets に置く（Secrets の値は、どのステップのログでも最初から伏せられる。
+      #   Variables だと、伏せる前のステップの env の表示に元の値が出る）。ここでは、アカウント ID だけが出る場面
+      #   （ecspresso の差分・AWS CLI の出力等）のために、アカウント ID（ロールの ARN の NonProd と、レジストリの先頭の Shared-Infra）を伏せる
+      - name: 値の伏せ字
+        env:
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+        run: |
+          echo "::add-mask::$(echo "${AWS_ROLE_ARN}" | cut -d: -f5)"
+          echo "::add-mask::${ECR_REGISTRY%%.*}"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      - uses: kayac/ecspresso@aff803a87548687aa8e6aa0fdc45ea8f00b6fbef # v2.8.7
+        with:
+          version: v2.8.7
+
+      # 環境が止まっている（stg / prod を stop.yml で止めた）ときはデプロイしない。nonprod は常に true
+      #   起動は aws-infra-env の start.yml。起動した後に、このワークフローを Re-run する
+      - name: 環境の稼働の確認
+        run: |
+          running=$(aws ssm get-parameter --name /infra-env/status/running --query Parameter.Value --output text)
+          if [ "${running}" != "true" ]; then
+            echo "::error::環境が停止中のため、デプロイしない（aws-infra-env の start.yml で起動してから Re-run する）"
+            exit 1
+          fi
+
+      # TARGET_GROUP_ARN・STATIC_BUCKET は、パラメータが無ければ空（nonprod）。それ以外の失敗（権限等）は失敗にする
+      #   値は変数に入れてから書く（echo "...$(...)" の形だと、取得の失敗でステップが止まらないため）
+      - name: 設定値の取得（SSM パラメータ）
+        run: |
+          get() { aws ssm get-parameter --name "$1" --query Parameter.Value --output text; }
+          get_optional() {
+            if aws ssm get-parameter --name "$1" --query Parameter.Value --output text 2> /tmp/ssm-error.log; then
+              return 0
+            fi
+            if grep --quiet ParameterNotFound /tmp/ssm-error.log; then
+              return 0
+            fi
+            cat /tmp/ssm-error.log >&2
+            return 1
+          }
+          cluster=$(get /products/sandbox/ecs/cluster-name)
+          namespace_id=$(get /products/sandbox/cloud-map/namespace-id)
+          target_group_arn=$(get_optional /products/sandbox/web/target-group-arn)
+          static_bucket=$(get_optional /products/sandbox/web/static-bucket-name)
+          {
+            echo "ECS_CLUSTER=${cluster}"
+            echo "NAMESPACE_ID=${namespace_id}"
+            echo "TARGET_GROUP_ARN=${target_group_arn}"
+            echo "STATIC_BUCKET=${static_bucket}"
+          } >> "$GITHUB_ENV"
+          [ -n "${target_group_arn}" ] && echo "ALB に登録する" || echo "ALB に登録しない"
+          [ -n "${static_bucket}" ] && echo "静的ファイルを S3 に置く" || echo "静的ファイルを S3 に置かない"
+
+      # リバースプロキシが <アプリの環境>-web.sandbox.internal で解決するための名前（無ければ作る）
+      - name: Cloud Map のサービス
+        run: |
+          name="${APP_ENV}-web"
+          arn=$(aws servicediscovery list-services \
+            --filters "Name=NAMESPACE_ID,Values=${NAMESPACE_ID},Condition=EQ" \
+            --query "Services[?Name=='${name}'].Arn | [0]" --output text)
+          if [ -z "${arn}" ] || [ "${arn}" = "None" ]; then
+            arn=$(aws servicediscovery create-service --name "${name}" --namespace-id "${NAMESPACE_ID}" \
+              --dns-config "RoutingPolicy=MULTIVALUE,DnsRecords=[{Type=A,TTL=10}]" \
+              --health-check-custom-config FailureThreshold=1 \
+              --query Service.Arn --output text)
+            echo "作成した：${name}"
+          fi
+          echo "CLOUD_MAP_SERVICE_ARN=${arn}" >> "$GITHUB_ENV"
+
+      # 静的ファイル（.next/static）を S3 の _next/static/ に置く（CloudFront が /_next/static/* を S3 から返す）
+      #   新しいタスクが返す画面が参照するため、デプロイの前に置く。古いファイルは消さない（前の版の画面を開いている人のため）
+      #   ファイル名にハッシュが付いて中身が変わらないため、長くキャッシュさせる
+      #   イメージは動かさず（docker create）、中のファイルを取り出すだけ（arm64 のイメージでも x86 のランナーで扱える）
+      - name: 静的ファイルの配置
+        if: env.STATIC_BUCKET != ''
+        env:
+          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+          IMAGE: ${{ secrets.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ inputs.image_tag }}
+        run: |
+          aws ecr get-login-password | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+          docker pull --quiet --platform linux/arm64 "${IMAGE}" > /dev/null
+          container=$(docker create --platform linux/arm64 "${IMAGE}")
+          docker cp "${container}:/app/.next/static" /tmp/static
+          docker rm "${container}" > /dev/null
+          aws s3 sync /tmp/static "s3://${STATIC_BUCKET}/_next/static/" \
+            --cache-control "public, max-age=31536000, immutable" --only-show-errors
+          echo "置いた：$(find /tmp/static -type f | wc -l) 個"
+
+      # サービスが無ければ作る。タスクが起動し、デプロイが終わるまで待つ（ALB に登録する環境は、ヘルスチェックが通るまで）
+      #   --tasks 1：タスクを止めている（aws-infra-env の stop.yml で 0 にした）ときにデプロイしても起動させる（毎日 3:00 の停止で 0 に戻る）
+      - name: デプロイ
+        env:
+          IMAGE: ${{ secrets.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ inputs.image_tag }}
+        run: ecspresso deploy --config deploy/ecspresso.jsonnet --tasks 1
+
+  # ヘルスチェック。確認用のタスクを ECS で一度だけ動かし、VPC の中から <アプリの環境>-web.sandbox.internal:8080 を呼ぶ
+  #   全環境で同じ経路（nonprod のリバースプロキシや、stg / prod の ALB に依存しない）。中身は .github/scripts/verify-task.sh（api と同じファイル）
+  verify:
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # ロールの ARN は Secrets（最初から伏せられる）。アカウント ID だけが出る場面（AWS CLI の出力等）のために伏せる
+      - name: 値の伏せ字
+        env:
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+        run: |
+          echo "::add-mask::$(echo "${AWS_ROLE_ARN}" | cut -d: -f5)"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      # /healthz はリバースプロキシ（NGINX）が先に応答するため、アプリの /api/health を見る（API には問い合わせない）
+      - name: ヘルスチェック
+        run: bash .github/scripts/verify-task.sh web "${APP_ENV}" /api/health

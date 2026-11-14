@@ -1,0 +1,102 @@
+name: pr
+
+# PR（作成・更新）：ビルド → PR 環境（pr<番号>）へのデプロイ・ヘルスチェック → E2E・PR へのコメント
+#   手順は _build.yml・_deploy.yml にまとめてあり、ここでは「いつ・どこに出すか」だけを書く
+#   PR を閉じたときの PR 環境の削除は pr-cleanup.yml
+on:
+  pull_request:
+    # develop 向けの PR だけ（develop → main の PR では PR 環境を作らない。中身は develop で dev・test に出ているものと同じため。main への反映は main.yml で stg に出して確かめる）
+    branches:
+      - develop
+    # ドキュメント（*.md）だけの変更では動かさない（コードと一緒に変わったときは動く）
+    paths-ignore:
+      - "**.md"
+
+permissions:
+  contents: read
+
+# 新しい push が来たら古い実行を止める（pr-cleanup.yml と同じグループ。PR を閉じたら、動いているデプロイを止めてから消す）
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/_build.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      # フォークからの PR では OIDC のトークンが発行されず、AWS に入れないため、イメージを作らない
+      push_image: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+
+  deploy:
+    needs: build
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    uses: ./.github/workflows/_deploy.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      app_env: pr${{ github.event.pull_request.number }}
+      # web の PR 環境は dev-api を呼ぶ（api の PR 環境とは組み合わせない）
+      api_env: dev
+      image_tag: ${{ needs.build.outputs.image_tag }}
+
+  # PR 環境に E2E を流す（yosing-sandbox-e2e の再利用できるワークフロー）
+  #   E2E の版は develop（PR 環境の web は develop に入る前のもの。文言などを変える PR は、e2e の develop を先に直す）
+  #   e2e は非公開のため、e2e を読む GitHub App のトークンで取ってくる（e2e を一般公開したら、App の2行を消す）
+  #   ジョブに environment: を付けない（OIDC の sub が変わり、CI ロールに入れなくなる）
+  #   ロールの ARN は secrets の側で渡す（secret の値はログで最初から伏せられる。with: で渡すとログに元の値が出る）
+  e2e:
+    needs: deploy
+    uses: yosing-global/yosing-sandbox-e2e/.github/workflows/e2e.yml@develop
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      app_env: pr${{ github.event.pull_request.number }}
+      e2e_ref: develop
+      e2e_app_client_id: ${{ vars.E2E_APP_CLIENT_ID }}
+    secrets:
+      aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}
+      e2e_app_private_key: ${{ secrets.E2E_APP_PRIVATE_KEY }}
+
+  # PR の Conversation に、PR 環境の URL を出す（コメントは1つだけにし、デプロイのたびに書き換える）
+  comment:
+    needs:
+      - build
+      - deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      APP_ENV: pr${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: PR へのコメント
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
+        run: |
+          deployed_at=$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M')
+          bash .github/scripts/pr-env-comment.sh "${PR_NUMBER}" upsert <<EOF
+          ### PR 環境：${APP_ENV}
+
+          | | |
+          | :--- | :--- |
+          | 画面 | https://${APP_ENV}.local.sandbox.yosing.net:8090/ |
+          | ヘルスチェック | https://${APP_ENV}.local.sandbox.yosing.net:8090/api/health |
+          | 呼ぶ API | dev（\`dev-api\`） |
+          | イメージ | \`${IMAGE_TAG:0:7}\` |
+          | デプロイ | ${deployed_at}（JST） |
+
+          開くには SSM のポートフォワーディングが要ります（手順は aws-infra-env の README の「開発環境へのアクセス」）。
+          タスクは毎日 3:00（JST）に止まります。止まっていたら、aws-infra-env の start（nonprod）で起動します。PR 環境で登録したユーザーは、dev のテーブルに残ります。
+          EOF
