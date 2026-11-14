@@ -1,6 +1,8 @@
 name: deploy
 
-# 共通（呼ばれる側）：1つの環境へのデプロイ（Cloud Map のサービス・稼働時間のスケジュールを含む）と、ヘルスチェック
+# 共通（呼ばれる側）：1つの環境へのデプロイ（Cloud Map のサービスを含む）と、ヘルスチェック（確認用のタスク）
+#   環境名では分岐しない。環境の違いは SSM パラメータ（値・有無）で決まる
+#     web/target-group-arn があれば ALB に登録する、web/static-bucket-name があれば静的ファイルを S3 に置く（どちらも stg / prod だけにある）
 #   呼ぶ側（pr.yml・develop.yml）のジョブで permissions（contents: read、id-token: write）を渡す
 on:
   workflow_call:
@@ -58,11 +60,43 @@ jobs:
         with:
           version: v2.8.7
 
+      # 環境が止まっている（stg / prod を stop.yml で止めた）ときはデプロイしない。nonprod は常に true
+      #   起動は aws-infra-env の start.yml。起動した後に、このワークフローを Re-run する
+      - name: 環境の稼働の確認
+        run: |
+          running=$(aws ssm get-parameter --name /infra-env/status/running --query Parameter.Value --output text)
+          if [ "${running}" != "true" ]; then
+            echo "::error::環境が停止中のため、デプロイしない（aws-infra-env の start.yml で起動してから Re-run する）"
+            exit 1
+          fi
+
+      # TARGET_GROUP_ARN・STATIC_BUCKET は、パラメータが無ければ空（nonprod）。それ以外の失敗（権限等）は失敗にする
+      #   値は変数に入れてから書く（echo "...$(...)" の形だと、取得の失敗でステップが止まらないため）
       - name: 設定値の取得（SSM パラメータ）
         run: |
           get() { aws ssm get-parameter --name "$1" --query Parameter.Value --output text; }
-          echo "ECS_CLUSTER=$(get /products/sandbox/ecs/cluster-name)" >> "$GITHUB_ENV"
-          echo "NAMESPACE_ID=$(get /products/sandbox/cloud-map/namespace-id)" >> "$GITHUB_ENV"
+          get_optional() {
+            if aws ssm get-parameter --name "$1" --query Parameter.Value --output text 2> /tmp/ssm-error.log; then
+              return 0
+            fi
+            if grep --quiet ParameterNotFound /tmp/ssm-error.log; then
+              return 0
+            fi
+            cat /tmp/ssm-error.log >&2
+            return 1
+          }
+          cluster=$(get /products/sandbox/ecs/cluster-name)
+          namespace_id=$(get /products/sandbox/cloud-map/namespace-id)
+          target_group_arn=$(get_optional /products/sandbox/web/target-group-arn)
+          static_bucket=$(get_optional /products/sandbox/web/static-bucket-name)
+          {
+            echo "ECS_CLUSTER=${cluster}"
+            echo "NAMESPACE_ID=${namespace_id}"
+            echo "TARGET_GROUP_ARN=${target_group_arn}"
+            echo "STATIC_BUCKET=${static_bucket}"
+          } >> "$GITHUB_ENV"
+          [ -n "${target_group_arn}" ] && echo "ALB に登録する" || echo "ALB に登録しない"
+          [ -n "${static_bucket}" ] && echo "静的ファイルを S3 に置く" || echo "静的ファイルを S3 に置かない"
 
       # リバースプロキシが <アプリの環境>-web.sandbox.internal で解決するための名前（無ければ作る）
       - name: Cloud Map のサービス
@@ -80,29 +114,34 @@ jobs:
           fi
           echo "CLOUD_MAP_SERVICE_ARN=${arn}" >> "$GITHUB_ENV"
 
-      # サービスが無ければ作る。タスクが起動し、デプロイが終わるまで待つ
-      #   --tasks 1：稼働時間の外（スケジュールで 0 になっている）にデプロイしても起動させる（次の 1:00 に 0 に戻る）
+      # 静的ファイル（.next/static）を S3 の _next/static/ に置く（CloudFront が /_next/static/* を S3 から返す）
+      #   新しいタスクが返す画面が参照するため、デプロイの前に置く。古いファイルは消さない（前の版の画面を開いている人のため）
+      #   ファイル名にハッシュが付いて中身が変わらないため、長くキャッシュさせる
+      #   イメージは動かさず（docker create）、中のファイルを取り出すだけ（arm64 のイメージでも x86 のランナーで扱える）
+      - name: 静的ファイルの配置
+        if: env.STATIC_BUCKET != ''
+        env:
+          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+          IMAGE: ${{ secrets.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ inputs.image_tag }}
+        run: |
+          aws ecr get-login-password | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+          docker pull --quiet --platform linux/arm64 "${IMAGE}" > /dev/null
+          container=$(docker create --platform linux/arm64 "${IMAGE}")
+          docker cp "${container}:/app/.next/static" /tmp/static
+          docker rm "${container}" > /dev/null
+          aws s3 sync /tmp/static "s3://${STATIC_BUCKET}/_next/static/" \
+            --cache-control "public, max-age=31536000, immutable" --only-show-errors
+          echo "置いた：$(find /tmp/static -type f | wc -l) 個"
+
+      # サービスが無ければ作る。タスクが起動し、デプロイが終わるまで待つ（ALB に登録する環境は、ヘルスチェックが通るまで）
+      #   --tasks 1：タスクを止めている（aws-infra-env の stop.yml で 0 にした）ときにデプロイしても起動させる（毎日 3:00 の停止で 0 に戻る）
       - name: デプロイ
         env:
           IMAGE: ${{ secrets.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ inputs.image_tag }}
         run: ecspresso deploy --config deploy/ecspresso.jsonnet --tasks 1
 
-      # 稼働時間（9:00〜翌 1:00、日本時間）。それ以外はタスクを 0 にする
-      - name: 稼働時間のスケジュール
-        run: |
-          target=(--service-namespace ecs --scalable-dimension ecs:service:DesiredCount
-            --resource-id "service/${ECS_CLUSTER}/${APP_ENV}-web")
-          aws application-autoscaling register-scalable-target "${target[@]}" --min-capacity 0 --max-capacity 1
-          aws application-autoscaling put-scheduled-action "${target[@]}" \
-            --scheduled-action-name "${APP_ENV}-web-start" \
-            --schedule "cron(0 9 * * ? *)" --timezone Asia/Tokyo \
-            --scalable-target-action MinCapacity=1,MaxCapacity=1
-          aws application-autoscaling put-scheduled-action "${target[@]}" \
-            --scheduled-action-name "${APP_ENV}-web-stop" \
-            --schedule "cron(0 1 * * ? *)" --timezone Asia/Tokyo \
-            --scalable-target-action MinCapacity=0,MaxCapacity=0
-
-  # ヘルスチェック。手元からつなぐときと同じ経路（SSM のポートフォワーディング → リバースプロキシ → Cloud Map → web）で確かめる
+  # ヘルスチェック。確認用のタスクを ECS で一度だけ動かし、VPC の中から <アプリの環境>-web.sandbox.internal:8080 を呼ぶ
+  #   全環境で同じ経路（nonprod のリバースプロキシや、stg / prod の ALB に依存しない）。中身は .github/scripts/verify-task.sh（api と同じファイル）
   verify:
     needs: deploy
     runs-on: ubuntu-latest
@@ -110,21 +149,15 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    env:
-      # Session Manager のプラグイン（バージョンとチェックサムを固定する）
-      SSM_PLUGIN_VERSION: 1.2.896.0
-      SSM_PLUGIN_SHA256: 53f51fcc67314a4bf85888a38a3967cd41f8d0f28a60a9469a63acf935ba713e
     steps:
-      # ロールの ARN・レジストリは Secrets に置く（Secrets の値は、どのステップのログでも最初から伏せられる。
-      #   Variables だと、伏せる前のステップの env の表示に元の値が出る）。ここでは、アカウント ID だけが出る場面
-      #   （ecspresso の差分・AWS CLI の出力等）のために、アカウント ID（ロールの ARN の NonProd と、レジストリの先頭の Shared-Infra）を伏せる
+      # ロールの ARN は Secrets（最初から伏せられる）。アカウント ID だけが出る場面（AWS CLI の出力等）のために伏せる
       - name: 値の伏せ字
         env:
           AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
-          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
         run: |
           echo "::add-mask::$(echo "${AWS_ROLE_ARN}" | cut -d: -f5)"
-          echo "::add-mask::${ECR_REGISTRY%%.*}"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
@@ -132,53 +165,6 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           mask-aws-account-id: true
 
-      - name: Session Manager のプラグインの導入
-        run: |
-          curl --fail --silent --show-error --location --output /tmp/session-manager-plugin.deb \
-            "https://s3.amazonaws.com/session-manager-downloads/plugin/${SSM_PLUGIN_VERSION}/ubuntu_64bit/session-manager-plugin.deb"
-          echo "${SSM_PLUGIN_SHA256}  /tmp/session-manager-plugin.deb" | sha256sum --check
-          sudo dpkg --install /tmp/session-manager-plugin.deb
-
-      # リバースプロキシ（NAT インスタンスに同居）の 443 を、ランナーの 8090 につなぐ
-      #   インスタンス ID は作り直すと変わるため、Name タグで探す
-      - name: ポートフォワーディングの開始
-        run: |
-          id=$(aws ec2 describe-instances \
-            --filters Name=tag:Name,Values=nonprod-nat-ec2 Name=instance-state-name,Values=running \
-            --query 'Reservations[0].Instances[0].InstanceId' --output text)
-          if [ -z "${id}" ] || [ "${id}" = "None" ]; then
-            echo "リバースプロキシ（nonprod-nat-ec2）が起動していない"
-            exit 1
-          fi
-          nohup aws ssm start-session --target "${id}" \
-            --document-name AWS-StartPortForwardingSession \
-            --parameters portNumber=443,localPortNumber=8090 > /tmp/ssm-session.log 2>&1 &
-          for i in $(seq 1 30); do
-            if grep --quiet 'Waiting for connections' /tmp/ssm-session.log; then
-              exit 0
-            fi
-            sleep 2
-          done
-          cat /tmp/ssm-session.log
-          exit 1
-
-      # デプロイの直後は、リバースプロキシが新しいタスクの IP を引くまで（DNS の TTL）少しかかるため、やり直しながら待つ
-      #   /healthz はリバースプロキシ（NGINX）が先に応答するため、アプリの /api/health を見る（API には問い合わせない）
+      # /healthz はリバースプロキシ（NGINX）が先に応答するため、アプリの /api/health を見る（API には問い合わせない）
       - name: ヘルスチェック
-        run: |
-          url="https://${APP_ENV}.local.sandbox.yosing.net:8090/api/health"
-          for i in $(seq 1 24); do
-            body=$(curl --silent --show-error --max-time 10 "${url}" || true)
-            if echo "${body}" | grep --quiet '"status":"UP"'; then
-              echo "${url} → ${body}"
-              exit 0
-            fi
-            echo "待機中（${i}）：${body}"
-            sleep 5
-          done
-          echo "ヘルスチェックに失敗した：${url}"
-          exit 1
-
-      - name: ポートフォワーディングのログ
-        if: always()
-        run: cat /tmp/ssm-session.log || true
+        run: bash .github/scripts/verify-task.sh web "${APP_ENV}" /api/health

@@ -88,7 +88,7 @@ sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）�
 | `aws-infra-global` | ECR（`sandbox/web`）、アプリの CI ロールの信頼ポリシー、DNS のホストゾーン |
 
 - インフラの詳細（名前・権限・SSM パラメータの一覧・リバースプロキシ）は `../aws-infra-env/README.md` の「sandbox（nonprod）」が正。
-- 本リポジトリでは AWS のリソースを Terraform で作らない（ECS のサービス・タスク定義・Cloud Map のサービス・稼働時間のスケジュールは、本リポジトリの CI が作る）。
+- 本リポジトリでは AWS のリソースを Terraform で作らない（ECS のサービス・タスク定義・Cloud Map のサービスは、本リポジトリの CI が作る）。
 
 ## 設計
 
@@ -216,7 +216,7 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 - nonprod（dev / test / PR 環境）は1つの AWS アカウント（NonProd）を、api と共有する。
 - nonprod の URL は `https://<env>.local.sandbox.yosing.net:8090`（api は `https://<env>.api.local.sandbox.yosing.net:8090`）。SSM のポートフォワーディング（手元の 8090 → リバースプロキシの 443）でつなぐ。手順は `../aws-infra-env/README.md`（API の Wiki の「環境別接続手順」にも同じ手順）。
 - `/healthz` はリバースプロキシ（NGINX）が先に応答するため、web のヘルスチェックは `/api/health`（`{"status":"UP"}`。API には問い合わせない）。
-- nonprod の稼働時間は毎日 9:00〜翌 1:00（JST）。それ以外はタスクが 0 になる。
+- nonprod のタスクは、使うときに `aws-infra-env` の `start.yml`（`nonprod`）で起動し、毎日 3:00（JST）に `stop.yml` で止まる（PR 環境も含む。2026-11-14 に、9:00〜翌 1:00 のスケジュールから変えた）。デプロイしたサービスは、止めていても起動する。
 - stg / prod の公開の入口は CloudFront ＋ 外部 ALB ＋ WAF（送信元ごとのレート制限は WAF で行う）。作るのは最後。
 - **prod は、ふだんは消しておく**（公開しない前提）。そのあいだは、メンテナンスのページを出す（2026-11-07 に決めた方針。作るのは stg / prod のインフラのとき）。
   - ずっと残すもの：Route 53 のレコード・CloudFront・S3（メンテナンスの HTML）・ACM の証明書（us-east-1）。prod の本体（外部 ALB・ECS・WAF 等）とは別の state に置く（例：`aws-infra-env` の `products/sandbox/prod-edge`）。
@@ -234,13 +234,20 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 | :--- | :--- | :--- |
 | `pr.yml` | PR（作成・更新） | `_build` → `_deploy`（`pr<番号>`、`dev-api` を呼ぶ）→ `e2e`（e2e の `e2e.yml@develop`）・PR へのコメント |
 | `develop.yml` | develop へのマージ | `_build` → `_deploy`（`dev`）と `_deploy`（`test`）を並べて動かす → `e2e`（`test`。e2e の `e2e.yml@develop`） |
-| `pr-cleanup.yml` | PR を閉じたとき | PR 環境の削除（ECS のサービス・Cloud Map のサービス・稼働時間のスケジュール） |
+| `pr-cleanup.yml` | PR を閉じたとき | PR 環境の削除（ECS のサービス・Cloud Map のサービス） |
 | `_build.yml` | 呼ばれる側 | `check`（`npm run check`・`npm run build`）→ `image`（Dockerfile で arm64 のイメージを作って push。タグを返す） |
-| `_deploy.yml` | 呼ばれる側 | 1つの環境（入力：`app_env`・`api_env`・`image_tag`）への `deploy` → `verify`（`https://<env>.local.sandbox.yosing.net:8090/api/health` が `UP` になるまで待つ） |
+| `_deploy.yml` | 呼ばれる側 | 1つの環境（入力：`app_env`・`api_env`・`image_tag`）への `deploy` → `verify`（確認用のタスクで `http://<env>-web.sandbox.internal:8080/api/health` が `UP` になるまで待つ） |
 
   - `concurrency`：`pr.yml` と `pr-cleanup.yml` は `pr-<番号>` のグループ（新しい実行が古い実行を止める）。`develop.yml` は止めずに順番に流す。
   - ドキュメント（`*.md`）だけの変更では、`pr.yml`・`develop.yml` を動かさない（`paths-ignore`。デプロイ・E2E をし直さないため。コードと一緒に変わったときは動く）。`pr-cleanup.yml` は、PR 環境が無くても通るので、そのまま動かす。必須のチェック（ブランチの保護）を付けると、飛ばした PR がマージできなくなるので、付けるときはこの作りを見直す。
   - PR の Conversation に、PR 環境の URL をコメントで出す（`.github/scripts/pr-env-comment.sh`。api と同じもの）。
+  - 環境名では分岐しない。環境の違いは SSM パラメータ（値・有無）で決める。
+    - deploy の最初に `/infra-env/status/running` を読み、`true` でなければ（stg / prod を止めている）失敗にする（nonprod は常に `true`）。
+    - `/products/sandbox/web/static-bucket-name` があれば（stg / prod）、イメージから `.next/static` を取り出し（`docker create`。動かさない）、S3 の `_next/static/` に置く（デプロイの前。古いファイルは消さない。CloudFront が `/_next/static/*` を S3 から返す）。
+    - `/products/sandbox/web/target-group-arn` があれば（stg / prod）、service-def に ALB への登録（`loadBalancers`）を足す（環境変数 `TARGET_GROUP_ARN`）。
+  - verify：確認用のタスク（`.github/scripts/verify-task.sh`。api と同じファイル）を ECS で一度だけ動かし、VPC の中から `http://<env>-web.sandbox.internal:8080/api/health` が `UP` になるまで待つ。全環境で同じ経路で、リバースプロキシや ALB に依存しない。
+    - タスク定義 `sandbox-<env>-web-verify`（CI が毎回登録する。タスクロールなし）。イメージは ECR Public の `amazonlinux:2023`（curl が入っている。digest で固定）。SG は `/products/sandbox/verify/security-group-id`。ログはロググループの `<env>-verify/verify/<タスク ID>`。上限10分で、過ぎたら止めて失敗にする。
+  - 起動のしかた（Fargate Spot）は service-def に書かず、クラスターの既定に従う（`aws-infra-env` が決める）。
 - E2E（2026-11-12 に `pr.yml`、2026-11-13 に `develop.yml` に足した）：
   - 呼ぶ E2E の版は、その環境にデプロイされている web の版に合わせる。PR 環境・dev・test は `@develop`、stg は `@main`（e2e も develop と main で運用する）。入力の `e2e_ref` も `uses` の `@` の後ろと同じにする。
   - test は api の CI もデプロイ・E2E を流すが、web と api の間で排他しない（2026-11-13 に決定。理由は e2e の CLAUDE.md・Notion の方式設計の 2.5.2）。相手のデプロイと重なって E2E が落ちたら、やり直す（自動のやり直し1回、それでも落ちたら手で Re-run）。
@@ -254,7 +261,7 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
   - `_build.yml`・`_deploy.yml` を呼ぶときは `secrets: inherit` で Secrets を引き継ぐ。e2e の `e2e.yml` には、ロールの ARN を `secrets:` の側（`aws_role_arn`）で渡す。
   - アカウント ID だけが出る場面（AWS CLI・ecspresso の出力等）のために、各ジョブの最初に、アカウント ID（ロールの ARN から取り出す NonProd と、レジストリの先頭の Shared-Infra）を `::add-mask::` で伏せる（`configure-aws-credentials` の `mask-aws-account-id` は、そのステップより後しか伏せないため）。
   - Secrets に移す前の実行のログには、元の値が残っている。一般公開するときの作業の一環で、Actions の古い実行のログを消す（2026-11-12 に決定）。
-- デプロイは ecspresso。値は SSM パラメータから読む（`/products/sandbox/ecs/*`、`/products/sandbox/cloud-map/namespace-id`、`/products/sandbox/web/task-role-arn`、`/products/sandbox/web/security-group-id`、`/products/sandbox/web/log-group-name`、`/infra-env/network/private-subnet-ids`）。
+- デプロイは ecspresso。値は SSM パラメータから読む（`/products/sandbox/ecs/*`、`/products/sandbox/cloud-map/namespace-id`、`/products/sandbox/web/task-role-arn`、`/products/sandbox/web/security-group-id`、`/products/sandbox/web/log-group-name`、`/infra-env/network/private-subnet-ids`）。CI は、ほかに `/infra-env/status/running`、`/products/sandbox/verify/security-group-id`、`/products/sandbox/web/target-group-arn`・`/products/sandbox/web/static-bucket-name`（stg / prod だけ）を読む。
 - 名前：ECS のサービス・Cloud Map のサービスは `<env>-web`、タスク定義のファミリーは `sandbox-<env>-web`、ロググループは `/sandbox/nonprod/web`（ログストリームの先頭を `<env>/`）。
 - イメージは1コミットにつき1つ。環境の違いはタスク定義の環境変数だけ（ビルドの時に環境ごとの値を埋め込まない。Next.js の `NEXT_PUBLIC_*` に環境ごとの値を入れない）。
 - イメージは linux/arm64。Dockerfile のビルドの段を `$BUILDPLATFORM`（x86 のランナー）で動かし、実行の段だけ arm64 にする（エミュレーションしない）。CI の `image` のジョブも、この Dockerfile でビルドする（手元と同じ作り方）。

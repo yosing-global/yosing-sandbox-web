@@ -95,5 +95,5 @@ jobs:
           | デプロイ | ${deployed_at}（JST） |
 
           開くには SSM のポートフォワーディングが要ります（手順は aws-infra-env の README の「開発環境へのアクセス」）。
-          稼働時間は 9:00〜翌 1:00（JST）です。PR 環境で登録したユーザーは、dev のテーブルに残ります。
+          タスクは毎日 3:00（JST）に止まります。止まっていたら、aws-infra-env の start（nonprod）で起動します。PR 環境で登録したユーザーは、dev のテーブルに残ります。
           EOF

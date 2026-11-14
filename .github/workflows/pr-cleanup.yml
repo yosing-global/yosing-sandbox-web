@@ -1,7 +1,7 @@
 name: pr-cleanup
 
 # PR を閉じたとき（マージ・マージせずに閉じる、のどちらも）に、PR 環境（pr<番号>）を消す
-#   ECS のサービス・Cloud Map のサービス・稼働時間のスケジュール
+#   ECS のサービス・Cloud Map のサービス
 #   タスク定義の履歴と ECR のイメージは残す（害がなく、イメージは ECR のライフサイクルで消える）
 #   PR 環境で登録したユーザー（dev のテーブル）は消さない
 on:
@@ -56,19 +56,6 @@ jobs:
           get() { aws ssm get-parameter --name "$1" --query Parameter.Value --output text; }
           echo "ECS_CLUSTER=$(get /products/sandbox/ecs/cluster-name)" >> "$GITHUB_ENV"
           echo "NAMESPACE_ID=$(get /products/sandbox/cloud-map/namespace-id)" >> "$GITHUB_ENV"
-
-      # 登録を外すと、スケジュール（開始・停止）も一緒に消える
-      - name: 稼働時間のスケジュールの削除
-        run: |
-          resource="service/${ECS_CLUSTER}/${APP_ENV}-web"
-          count=$(aws application-autoscaling describe-scalable-targets --service-namespace ecs \
-            --resource-ids "${resource}" --query 'length(ScalableTargets)' --output text)
-          if [ "${count}" = "0" ]; then
-            echo "登録が無い"
-            exit 0
-          fi
-          aws application-autoscaling deregister-scalable-target --service-namespace ecs \
-            --scalable-dimension ecs:service:DesiredCount --resource-id "${resource}"
 
       # タスクを止めてサービスを消し、消え終わるまで待つ（タスクが止まると Cloud Map の登録も外れる）
       - name: ECS のサービスの削除
