@@ -1,0 +1,47 @@
+name: sync-develop
+
+# main へのマージの後に、develop を main まで早送りし、履歴をそろえる
+#   develop → main の PR をマージコミットでマージすると、main にだけマージコミットが増え、
+#   次の develop → main の PR に「develop に無いコミット」が出る。それを無くすため
+#   develop の Org のルールセットは、GitHub App（yosing-global-sync-develop）にバイパスを許可している（main には許可しない）
+#   develop に main に無いコミットがあるとき（develop に先にマージがあった）は早送りできないため、警告だけにする（force push はしない）
+#   main.yml と違い、ドキュメントだけの変更でも動かす（履歴は常にそろえる）
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-develop
+  cancel-in-progress: false
+
+jobs:
+  sync-develop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # develop に push できるトークン（このリポジトリだけ、Contents の書き込みだけ。ジョブの終わりに取り消される）
+      - name: develop に push するトークン
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.SYNC_DEVELOP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SYNC_DEVELOP_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: develop の早送り
+        run: |
+          if git merge-base --is-ancestor origin/develop HEAD; then
+            git push origin HEAD:refs/heads/develop
+            echo "develop を main（$(git rev-parse --short HEAD)）まで早送りした"
+          else
+            echo "::warning::develop に main に無いコミットがあるため、早送りできない（develop → main の PR を出してそろえる）"
+          fi

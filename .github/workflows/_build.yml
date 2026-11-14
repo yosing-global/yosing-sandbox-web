@@ -1,7 +1,7 @@
 name: build
 
 # 共通（呼ばれる側）：静的チェック・単体テスト・ビルドの確認と、arm64 のイメージの ECR への push
-#   呼ぶ側（pr.yml・develop.yml）のジョブで permissions（contents: read、id-token: write）を渡す
+#   呼ぶ側（pr.yml・develop.yml・main.yml）のジョブで permissions（contents: read、id-token: write）を渡す
 on:
   workflow_call:
     inputs:
@@ -9,9 +9,21 @@ on:
         description: イメージを作って push するか（フォークからの PR では AWS に入れないため false にする）
         type: boolean
         default: true
+      tag_prefix:
+        description: タグの先頭に付ける文字（main.yml は main-。stg・prod で使うイメージを、ECR のライフサイクルで別に残すため）
+        type: string
+        default: ""
+    # 呼ぶ側は secrets: inherit（nonprod）か、名前を指定して渡す（main.yml は Stg の値を渡す）
+    secrets:
+      AWS_ROLE_ARN:
+        description: アプリの CI ロールの ARN（環境のアカウント）
+        required: true
+      ECR_REGISTRY:
+        description: ECR のレジストリ（<Shared-Infra のアカウント ID>.dkr.ecr.ap-northeast-1.amazonaws.com）
+        required: true
     outputs:
       image_tag:
-        description: push したイメージのタグ（コミットのハッシュ）
+        description: push したイメージのタグ（<tag_prefix><コミットのハッシュ>）
         value: ${{ jobs.image.outputs.tag }}
 
 permissions:
@@ -70,9 +82,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # タグはコミットのハッシュ（PR では、PR を develop に取り込んだ状態のコミット。ビルドした中身と一致する）
+      #   main.yml は main-<ハッシュ>（stg と prod で同じイメージを使う）
       - name: タグ
         id: meta
-        run: echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+        env:
+          TAG_PREFIX: ${{ inputs.tag_prefix }}
+        run: echo "tag=${TAG_PREFIX}${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:

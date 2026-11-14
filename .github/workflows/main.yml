@@ -1,0 +1,48 @@
+name: main
+
+# main へのマージ：ビルド（main-<ハッシュ> のイメージの push）→ stg へのデプロイ（静的ファイルの S3 への配置・ALB への登録を含む）・ヘルスチェック
+#   stg と prod は同じイメージ（main-<ハッシュ>）を使う。prod へのデプロイは prod.yml（手動。stg で成功したコミットだけ）
+#   AWS は Stg のアカウント。ロールの ARN は Secrets の AWS_ROLE_ARN_STG（OIDC の sub は ref:refs/heads/main。ジョブに environment: を付けない）
+#   stg が止まっている（aws-infra-env の stop.yml）ときは、デプロイで失敗する。start.yml で起動してから Re-run する
+#   E2E（e2e の e2e.yml@main）は、e2e の stg 対応の後に、デプロイの後に足す
+on:
+  push:
+    branches:
+      - main
+    # ドキュメント（*.md）だけの変更では動かさない（コードと一緒に変わったときは動く）
+    paths-ignore:
+      - "**.md"
+
+permissions:
+  contents: read
+
+# 止めずに順番に流す（デプロイを途中で止めない。待っている実行は最新の1つだけ残る）
+concurrency:
+  group: main
+  cancel-in-progress: false
+
+jobs:
+  build:
+    uses: ./.github/workflows/_build.yml
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN_STG }}
+      ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      tag_prefix: main-
+
+  deploy-stg:
+    needs: build
+    uses: ./.github/workflows/_deploy.yml
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN_STG }}
+      ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      app_env: stg
+      api_env: stg
+      image_tag: ${{ needs.build.outputs.image_tag }}

@@ -3,21 +3,29 @@ name: deploy
 # 共通（呼ばれる側）：1つの環境へのデプロイ（Cloud Map のサービスを含む）と、ヘルスチェック（確認用のタスク）
 #   環境名では分岐しない。環境の違いは SSM パラメータ（値・有無）で決まる
 #     web/target-group-arn があれば ALB に登録する、web/static-bucket-name があれば静的ファイルを S3 に置く（どちらも stg / prod だけにある）
-#   呼ぶ側（pr.yml・develop.yml）のジョブで permissions（contents: read、id-token: write）を渡す
+#   呼ぶ側（pr.yml・develop.yml・main.yml）のジョブで permissions（contents: read、id-token: write）を渡す
 on:
   workflow_call:
     inputs:
       app_env:
-        description: アプリの環境（dev / test / pr<番号>）。サービス・タスク定義・ログ・URL の名前に使う
+        description: アプリの環境（dev / test / pr<番号> / stg）。サービス・タスク定義・ログ・URL の名前に使う
         type: string
         required: true
       api_env:
-        description: 呼ぶ API の環境（dev / test。PR 環境は dev-api を呼ぶ）
+        description: 呼ぶ API の環境（dev / test / stg。PR 環境は dev-api を呼ぶ）
         type: string
         required: true
       image_tag:
-        description: デプロイするイメージのタグ（コミットのハッシュ）
+        description: デプロイするイメージのタグ（_build.yml の出力）
         type: string
+        required: true
+    # 呼ぶ側は secrets: inherit（nonprod）か、名前を指定して渡す（main.yml は Stg の値を渡す）
+    secrets:
+      AWS_ROLE_ARN:
+        description: アプリの CI ロールの ARN（環境のアカウント）
+        required: true
+      ECR_REGISTRY:
+        description: ECR のレジストリ（<Shared-Infra のアカウント ID>.dkr.ecr.ap-northeast-1.amazonaws.com）
         required: true
 
 permissions:

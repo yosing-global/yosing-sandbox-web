@@ -208,9 +208,9 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 
 | 契機 | デプロイ先 |
 | :--- | :--- |
-| PR | PR 環境 `pr<番号>`（PR を閉じたら削除） |
+| develop への PR | PR 環境 `pr<番号>`（PR を閉じたら削除。develop → main の PR では作らない） |
 | develop へのマージ | `dev` と `test` |
-| main へのマージ | `stg`（インフラ未作成） |
+| main へのマージ | `stg` |
 | 手動 | `prod`（インフラ未作成。stg に出したものだけ） |
 
 - nonprod（dev / test / PR 環境）は1つの AWS アカウント（NonProd）を、api と共有する。
@@ -232,10 +232,12 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 
 | ファイル | 契機 | 内容 |
 | :--- | :--- | :--- |
-| `pr.yml` | PR（作成・更新） | `_build` → `_deploy`（`pr<番号>`、`dev-api` を呼ぶ）→ `e2e`（e2e の `e2e.yml@develop`）・PR へのコメント |
+| `pr.yml` | develop への PR（作成・更新） | `_build` → `_deploy`（`pr<番号>`、`dev-api` を呼ぶ）→ `e2e`（e2e の `e2e.yml@develop`）・PR へのコメント |
 | `develop.yml` | develop へのマージ | `_build` → `_deploy`（`dev`）と `_deploy`（`test`）を並べて動かす → `e2e`（`test`。e2e の `e2e.yml@develop`） |
 | `pr-cleanup.yml` | PR を閉じたとき | PR 環境の削除（ECS のサービス・Cloud Map のサービス） |
 | `_build.yml` | 呼ばれる側 | `check`（`npm run check`・`npm run build`）→ `image`（Dockerfile で arm64 のイメージを作って push。タグを返す） |
+| `main.yml` | main へのマージ | `_build`（タグは `main-<ハッシュ>`）→ `_deploy`（`stg`、`stg-api` を呼ぶ）。AWS は Stg（Secrets の `AWS_ROLE_ARN_STG`）。E2E は e2e の stg 対応の後に足す |
+| `sync-develop.yml` | main へのマージ | develop を main まで早送りし、履歴をそろえる（GitHub App `yosing-global-sync-develop` のトークンで push。develop に main に無いコミットがあれば警告だけ）。この push では `develop.yml` を動かさない（`build` の `if`）。develop → main の PR は「マージコミット」でマージする（スカッシュ・リベースだと早送りできない） |
 | `_deploy.yml` | 呼ばれる側 | 1つの環境（入力：`app_env`・`api_env`・`image_tag`）への `deploy` → `verify`（確認用のタスクで `http://<env>-web.sandbox.internal:8080/api/health` が `UP` になるまで待つ） |
 
   - `concurrency`：`pr.yml` と `pr-cleanup.yml` は `pr-<番号>` のグループ（新しい実行が古い実行を止める）。`develop.yml` は止めずに順番に流す。
@@ -256,11 +258,12 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
   - 失敗したときの HTML のレポート（トレース・スクリーンショット）は、この PR の Actions の成果物 `e2e-report-<環境>-<試行の回数>` に7日残る。
 - タスク定義の環境変数：`APP_ENV`（`dev` / `test` / `pr<番号>`）、`API_BASE_URL`（`http://<API_ENV>-api.sandbox.internal:8080`。`API_ENV` は dev / test、PR 環境は dev）。web のタスクロールはアプリの環境で共有するため、api の `ROLE_ENV` に当たるものは無い。
 - タスクのサイズ：0.25 vCPU / 0.5GB（Fargate の最小。足りなければ上げる）。
-- AWS への認証は GitHub の OIDC。CI ロールは NonProd の `github-actions-sandbox-web-role`（引き受けられるのは `pull_request` と develop ブランチ）。ジョブに `environment:` を付けない（OIDC の `sub` が変わり、信頼ポリシーに合わなくなる）。
-- アカウント ID・ロールの ARN・ECR の URL はファイルに書かず、GitHub の **Secrets**（`AWS_ROLE_ARN`・`ECR_REGISTRY`）に置く。Secrets の値は、どのステップのログでも最初から伏せられる。Variables に置くと、`::add-mask::` を行うステップ自身の `env:` の表示に元の値が出る（2026-11-12 に気づき、Variables から Secrets に移した）。
-  - `_build.yml`・`_deploy.yml` を呼ぶときは `secrets: inherit` で Secrets を引き継ぐ。e2e の `e2e.yml` には、ロールの ARN を `secrets:` の側（`aws_role_arn`）で渡す。
+- AWS への認証は GitHub の OIDC。CI ロールは NonProd の `github-actions-sandbox-web-role`（引き受けられるのは `pull_request` と develop ブランチ）。Stg にも同じ名前のロールがあり、引き受けられるのは main ブランチだけ（`main.yml`）。ジョブに `environment:` を付けない（OIDC の `sub` が変わり、信頼ポリシーに合わなくなる）。
+- アカウント ID・ロールの ARN・ECR の URL はファイルに書かず、GitHub の **Secrets**（`AWS_ROLE_ARN`・`ECR_REGISTRY`・`AWS_ROLE_ARN_STG`（Stg の CI ロールの ARN））に置く（prod は Environment `prod` の Secrets に置く予定）。Secrets の値は、どのステップのログでも最初から伏せられる。Variables に置くと、`::add-mask::` を行うステップ自身の `env:` の表示に元の値が出る（2026-11-12 に気づき、Variables から Secrets に移した）。
+  - `_build.yml`・`_deploy.yml` を呼ぶときは `secrets: inherit` で Secrets を引き継ぐ（nonprod）。両方とも、使う Secrets（`AWS_ROLE_ARN`・`ECR_REGISTRY`）を宣言していて、`main.yml` は `AWS_ROLE_ARN` に `AWS_ROLE_ARN_STG` を名前で渡す。e2e の `e2e.yml` には、ロールの ARN を `secrets:` の側（`aws_role_arn`）で渡す。
   - アカウント ID だけが出る場面（AWS CLI・ecspresso の出力等）のために、各ジョブの最初に、アカウント ID（ロールの ARN から取り出す NonProd と、レジストリの先頭の Shared-Infra）を `::add-mask::` で伏せる（`configure-aws-credentials` の `mask-aws-account-id` は、そのステップより後しか伏せないため）。
   - Secrets に移す前の実行のログには、元の値が残っている。一般公開するときの作業の一環で、Actions の古い実行のログを消す（2026-11-12 に決定）。
+- イメージのタグ：PR / develop はコミットのハッシュ、main は `main-<ハッシュ>`（stg と prod で同じイメージを使う。ECR のライフサイクルで、`main-` は直近の10個を別に残す）。
 - デプロイは ecspresso。値は SSM パラメータから読む（`/products/sandbox/ecs/*`、`/products/sandbox/cloud-map/namespace-id`、`/products/sandbox/web/task-role-arn`、`/products/sandbox/web/security-group-id`、`/products/sandbox/web/log-group-name`、`/infra-env/network/private-subnet-ids`）。CI は、ほかに `/infra-env/status/running`、`/products/sandbox/verify/security-group-id`、`/products/sandbox/web/target-group-arn`・`/products/sandbox/web/static-bucket-name`（stg / prod だけ）を読む。
 - 名前：ECS のサービス・Cloud Map のサービスは `<env>-web`、タスク定義のファミリーは `sandbox-<env>-web`、ロググループは `/sandbox/nonprod/web`（ログストリームの先頭を `<env>/`）。
 - イメージは1コミットにつき1つ。環境の違いはタスク定義の環境変数だけ（ビルドの時に環境ごとの値を埋め込まない。Next.js の `NEXT_PUBLIC_*` に環境ごとの値を入れない）。

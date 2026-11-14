@@ -20,7 +20,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # sync-develop.yml が develop を main まで早送りした push では動かさない（中身は develop で確かめ済み。dev・test へのデプロイをし直さない）
+  #   後ろのジョブは、このジョブを needs で待つため、一緒に飛ばされる
   build:
+    if: github.actor != 'yosing-global-sync-develop[bot]'
     uses: ./.github/workflows/_build.yml
     secrets: inherit
     permissions:
