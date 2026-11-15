@@ -3,22 +3,30 @@ name: deploy
 # 共通（呼ばれる側）：1つの環境へのデプロイ（Cloud Map のサービスを含む）と、ヘルスチェック（確認用のタスク）
 #   環境名では分岐しない。環境の違いは SSM パラメータ（値・有無）で決まる
 #     web/target-group-arn があれば ALB に登録する、web/static-bucket-name があれば静的ファイルを S3 に置く（どちらも stg / prod だけにある）
-#   呼ぶ側（pr.yml・develop.yml・main.yml）のジョブで permissions（contents: read、id-token: write）を渡す
+#   呼ぶ側（pr.yml・develop.yml・main.yml・prod.yml）のジョブで permissions（contents: read、id-token: write）を渡す
+#   prod は、中のジョブに Environment の prod を付ける（入力の environment）。呼ぶ側のジョブには environment を書けないため
+#     Prod の CI ロールは OIDC の sub が environment:prod のときだけ入れる。Environment の prod は main だけに限っている
+#     Environment の Secrets の AWS_ROLE_ARN（Prod のロール）は、呼ぶ側から渡した値より優先される
+#   nonprod・stg は空にする（Environment を付けると sub が変わり、CI ロールに入れなくなる）
 on:
   workflow_call:
     inputs:
       app_env:
-        description: アプリの環境（dev / test / pr<番号> / stg）。サービス・タスク定義・ログ・URL の名前に使う
+        description: アプリの環境（dev / test / pr<番号> / stg / prod）。サービス・タスク定義・ログ・URL の名前に使う
         type: string
         required: true
       api_env:
-        description: 呼ぶ API の環境（dev / test / stg。PR 環境は dev-api を呼ぶ）
+        description: 呼ぶ API の環境（dev / test / stg / prod。PR 環境は dev-api を呼ぶ）
         type: string
         required: true
       image_tag:
         description: デプロイするイメージのタグ（_build.yml の出力）
         type: string
         required: true
+      environment:
+        description: ジョブに付ける GitHub の Environment（prod.yml は prod。nonprod・stg は空＝付けない）
+        type: string
+        default: ""
     # 呼ぶ側は secrets: inherit（nonprod）か、名前を指定して渡す（main.yml は Stg の値を渡す）
     secrets:
       AWS_ROLE_ARN:
@@ -40,6 +48,7 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -153,6 +162,7 @@ jobs:
   verify:
     needs: deploy
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
     timeout-minutes: 15
     permissions:
       contents: read
