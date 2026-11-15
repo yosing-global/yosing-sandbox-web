@@ -211,7 +211,7 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 | develop への PR | PR 環境 `pr<番号>`（PR を閉じたら削除。develop → main の PR では作らない） |
 | develop へのマージ | `dev` と `test` |
 | main へのマージ | `stg` |
-| 手動 | `prod`（インフラ未作成。stg に出したものだけ） |
+| 手動（`prod.yml`） | `prod`（stg で成功したコミットだけ） |
 
 - nonprod（dev / test / PR 環境）は1つの AWS アカウント（NonProd）を、api と共有する。
 - nonprod の URL は `https://<env>.local.sandbox.yosing.net:8090`（api は `https://<env>.api.local.sandbox.yosing.net:8090`）。SSM のポートフォワーディング（手元の 8090 → リバースプロキシの 443）でつなぐ。手順は `../aws-infra-env/README.md`（API の Wiki の「環境別接続手順」にも同じ手順）。
@@ -238,6 +238,7 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 | `_build.yml` | 呼ばれる側 | `check`（`npm run check`・`npm run build`）→ `image`（Dockerfile で arm64 のイメージを作って push。タグを返す） |
 | `main.yml` | main へのマージ | `_build`（タグは `main-<ハッシュ>`）→ `_deploy`（`stg`、`stg-api` を呼ぶ）→ `e2e`（`stg`。e2e の `e2e.yml@main`）。AWS は Stg（Secrets の `AWS_ROLE_ARN_STG`） |
 | `sync-develop.yml` | main へのマージ | develop を main まで早送りし、履歴をそろえる（GitHub App `yosing-global-sync-develop` のトークンで push。develop に main に無いコミットがあれば警告だけ）。この push では `develop.yml` を動かさない（`build` の `if`）。develop → main の PR は「マージコミット」でマージする（スカッシュ・リベースだと早送りできない） |
+| `prod.yml` | 手動（main） | そのコミットの `main.yml` の成功を確かめる → `_deploy`（`prod`、`prod-api` を呼ぶ。イメージは `main-<ハッシュ>`、Environment `prod`）。E2E は流さない。api と両方を出すときは api → web の順 |
 | `_deploy.yml` | 呼ばれる側 | 1つの環境（入力：`app_env`・`api_env`・`image_tag`）への `deploy` → `verify`（確認用のタスクで `http://<env>-web.sandbox.internal:8080/api/health` が `UP` になるまで待つ） |
 
   - `concurrency`：`pr.yml` と `pr-cleanup.yml` は `pr-<番号>` のグループ（新しい実行が古い実行を止める）。`develop.yml` は止めずに順番に流す。
@@ -258,8 +259,8 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
   - 失敗したときの HTML のレポート（トレース・スクリーンショット）は、この PR の Actions の成果物 `e2e-report-<環境>-<試行の回数>` に7日残る。
 - タスク定義の環境変数：`APP_ENV`（`dev` / `test` / `pr<番号>`）、`API_BASE_URL`（`http://<API_ENV>-api.sandbox.internal:8080`。`API_ENV` は dev / test、PR 環境は dev）。web のタスクロールはアプリの環境で共有するため、api の `ROLE_ENV` に当たるものは無い。
 - タスクのサイズ：0.25 vCPU / 0.5GB（Fargate の最小。足りなければ上げる）。
-- AWS への認証は GitHub の OIDC。CI ロールは NonProd の `github-actions-sandbox-web-role`（引き受けられるのは `pull_request` と develop ブランチ）。Stg にも同じ名前のロールがあり、引き受けられるのは main ブランチだけ（`main.yml`）。ジョブに `environment:` を付けない（OIDC の `sub` が変わり、信頼ポリシーに合わなくなる）。
-- アカウント ID・ロールの ARN・ECR の URL はファイルに書かず、GitHub の **Secrets**（`AWS_ROLE_ARN`・`ECR_REGISTRY`・`AWS_ROLE_ARN_STG`（Stg の CI ロールの ARN））に置く（prod は Environment `prod` の Secrets に置く予定）。Secrets の値は、どのステップのログでも最初から伏せられる。Variables に置くと、`::add-mask::` を行うステップ自身の `env:` の表示に元の値が出る（2026-11-12 に気づき、Variables から Secrets に移した）。
+- AWS への認証は GitHub の OIDC。CI ロールは NonProd の `github-actions-sandbox-web-role`（引き受けられるのは `pull_request` と develop ブランチ）。Stg にも同じ名前のロールがあり、引き受けられるのは main ブランチだけ（`main.yml`）。Prod のロールは Environment `prod` のジョブだけ（`prod.yml`。sub が `environment:prod`。Environment `prod` は main だけに限っている）。nonprod・stg のジョブには `environment:` を付けない（OIDC の `sub` が変わり、信頼ポリシーに合わなくなる）。`_deploy.yml` は入力 `environment` で中のジョブに付ける（呼ぶ側のジョブには書けないため）。
+- アカウント ID・ロールの ARN・ECR の URL はファイルに書かず、GitHub の **Secrets**（`AWS_ROLE_ARN`・`ECR_REGISTRY`・`AWS_ROLE_ARN_STG`（Stg の CI ロールの ARN））に置く（prod は Environment `prod` の Secrets の `AWS_ROLE_ARN`。`environment: prod` のジョブでは、リポジトリの同じ名前の値より優先される）。Secrets の値は、どのステップのログでも最初から伏せられる。Variables に置くと、`::add-mask::` を行うステップ自身の `env:` の表示に元の値が出る（2026-11-12 に気づき、Variables から Secrets に移した）。
   - `_build.yml`・`_deploy.yml` を呼ぶときは `secrets: inherit` で Secrets を引き継ぐ（nonprod）。両方とも、使う Secrets（`AWS_ROLE_ARN`・`ECR_REGISTRY`）を宣言していて、`main.yml` は `AWS_ROLE_ARN` に `AWS_ROLE_ARN_STG` を名前で渡す。e2e の `e2e.yml` には、ロールの ARN を `secrets:` の側（`aws_role_arn`）で渡す。
   - アカウント ID だけが出る場面（AWS CLI・ecspresso の出力等）のために、各ジョブの最初に、アカウント ID（ロールの ARN から取り出す NonProd と、レジストリの先頭の Shared-Infra）を `::add-mask::` で伏せる（`configure-aws-credentials` の `mask-aws-account-id` は、そのステップより後しか伏せないため）。
   - Secrets に移す前の実行のログには、元の値が残っている。一般公開するときの作業の一環で、Actions の古い実行のログを消す（2026-11-12 に決定）。
