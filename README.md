@@ -90,12 +90,14 @@ BFF の部分（`src/server/`）は、api と同じく、層に分けて依存�
 | :--- | :--- | :--- |
 | Pull Request | PR ごとの環境（PR を閉じると削除。API は dev を使う） | PR ごとの環境 |
 | `develop` へのマージ | dev、test | test |
-| `main` へのマージ | stg | stg（stg を作るときに足す） |
-| 手動 | prod | なし |
+| `main` へのマージ | stg（`https://stg.sandbox.yosing.net`。Basic 認証あり） | stg |
+| 手動（`prod.yml`。stg で成功したコミットだけ） | prod（`https://sandbox.yosing.net`） | なし |
 
 - E2E は、デプロイとヘルスチェックの後に、[yosing-sandbox-e2e](https://github.com/yosing-global/yosing-sandbox-e2e) の再利用できるワークフローを呼んで流します（Playwright。ブラウザーから web・API・DB をつなげて、登録・ログイン・ログアウトの流れと、画面の文言を確かめる）。シナリオと作りは、e2e の README にあります。
 - test は api の CI も E2E を流します。web と api の間で排他しないため、相手のデプロイの最中に流れて落ちることがあります。そのときは流し直します（自動のやり直し1回、それでも落ちたら手で Re-run）。
-- E2E が作ったテストのユーザー（ログイン ID が `e2e_dummy_` で始まる）は dev・test に溜まり、api の CI が登録から24時間後に消します。
+- E2E が作ったテストのユーザー（ログイン ID が `e2e_dummy_` で始まる）は dev・test・stg に溜まり、api の CI が登録から24時間後に消します。
+- stg と prod は同じイメージ（main へのマージでビルドしたもの）を使います。stg・prod では、静的ファイル（`/_next/static/*`）を CloudFront → S3 から返し、それ以外を ALB → web に送ります。
+- 環境のタスクは、ふだんは止めておき、使うときに起動します（毎日 3:00 に止まります）。stg・prod を止めている間は、メンテナンス中のページが出ます。
 
 ## ローカルでの開発
 
