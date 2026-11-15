@@ -1,10 +1,9 @@
 name: main
 
-# main へのマージ：ビルド（main-<ハッシュ> のイメージの push）→ stg へのデプロイ（静的ファイルの S3 への配置・ALB への登録を含む）・ヘルスチェック
+# main へのマージ：ビルド（main-<ハッシュ> のイメージの push）→ stg へのデプロイ（静的ファイルの S3 への配置・ALB への登録を含む）・ヘルスチェック → E2E（stg）
 #   stg と prod は同じイメージ（main-<ハッシュ>）を使う。prod へのデプロイは prod.yml（手動。stg で成功したコミットだけ）
 #   AWS は Stg のアカウント。ロールの ARN は Secrets の AWS_ROLE_ARN_STG（OIDC の sub は ref:refs/heads/main。ジョブに environment: を付けない）
 #   stg が止まっている（aws-infra-env の stop.yml）ときは、デプロイで失敗する。start.yml で起動してから Re-run する
-#   E2E（e2e の e2e.yml@main）は、e2e の stg 対応の後に、デプロイの後に足す
 on:
   push:
     branches:
@@ -46,3 +45,21 @@ jobs:
       app_env: stg
       api_env: stg
       image_tag: ${{ needs.build.outputs.image_tag }}
+
+  # stg に E2E を流す（yosing-sandbox-e2e の再利用できるワークフロー。develop.yml と同じ形）
+  #   E2E の版は main（stg の web は main のもの）。e2e は、SSM の値（公開の URL・Basic 認証）を見て、CloudFront の公開の入口に向けて流す
+  #   e2e は一般公開まで非公開のため、e2e を読む GitHub App のトークンで取ってくる（一般公開したら App の2行を消す）
+  #   ジョブに environment: を付けない（OIDC の sub が変わり、Stg の CI ロールに入れなくなる）
+  e2e:
+    needs: deploy-stg
+    uses: yosing-global/yosing-sandbox-e2e/.github/workflows/e2e.yml@main
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      app_env: stg
+      e2e_ref: main
+      e2e_app_client_id: ${{ vars.E2E_APP_CLIENT_ID }}
+    secrets:
+      aws_role_arn: ${{ secrets.AWS_ROLE_ARN_STG }}
+      e2e_app_private_key: ${{ secrets.E2E_APP_PRIVATE_KEY }}
