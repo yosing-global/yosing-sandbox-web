@@ -1,0 +1,67 @@
+name: prod
+
+# prod へのデプロイ（手動）：stg で成功したコミットのイメージ（main-<ハッシュ>）を、そのまま prod に出す
+#   Actions の prod → Run workflow で、ブランチに main を選ぶ（main の最新のコミットを出す）
+#   順番：そのコミットの main.yml（stg へのデプロイ・確認・E2E）が成功していることを確かめる → デプロイ → 確認（verify）
+#   イメージは作らない（stg と同じもの）。E2E は流さない（prod にテストのユーザーを作らないため）
+#   AWS は Prod のアカウント。ジョブに Environment の prod を付ける（_deploy.yml の入力 environment）
+#     ロールの ARN は Environment の prod の Secrets の AWS_ROLE_ARN（リポジトリの同じ名前の値より優先される）
+#   prod が止まっている（aws-infra-env の stop.yml）ときは、デプロイで失敗する。start.yml（prod）で起動してから Re-run する
+#   web と api の両方を出すときは、api → web の順（web は api を呼ぶため）。静的ファイルの S3 への配置・ALB への登録は _deploy.yml が行う
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 止めずに順番に流す（デプロイを途中で止めない）
+concurrency:
+  group: prod
+  cancel-in-progress: false
+
+jobs:
+  # main のコミットで、main.yml が成功していること（stg で確かめたものだけを出す）
+  verify-stg:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      image_tag: ${{ steps.check.outputs.image_tag }}
+    steps:
+      # main 以外で起動した場合はスキップではなく失敗にする（起動ミスに気づけるように）
+      - name: ブランチの確認
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::main を選んで起動してください（${GITHUB_REF_NAME} が選ばれています）"
+          exit 1
+
+      # ドキュメントだけの変更のコミットは main.yml が動かない（イメージも作られない）ため、出せない
+      - name: stg での成功の確認
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          count=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/main.yml/runs?head_sha=${GITHUB_SHA}&status=success" \
+            --jq '.total_count')
+          if [ "${count}" = "0" ]; then
+            echo "::error::このコミット（${GITHUB_SHA::7}）の main.yml が成功していない（stg で確かめてから出す）"
+            exit 1
+          fi
+          echo "main.yml が成功している：${GITHUB_SHA::7}"
+          echo "image_tag=main-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+  deploy-prod:
+    needs: verify-stg
+    uses: ./.github/workflows/_deploy.yml
+    # ECR_REGISTRY はリポジトリの値。AWS_ROLE_ARN は、中のジョブの Environment（prod）の値が優先される
+    secrets: inherit
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      app_env: prod
+      api_env: prod
+      image_tag: ${{ needs.verify-stg.outputs.image_tag }}
+      environment: prod
