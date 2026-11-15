@@ -236,7 +236,7 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 | `develop.yml` | develop へのマージ | `_build` → `_deploy`（`dev`）と `_deploy`（`test`）を並べて動かす → `e2e`（`test`。e2e の `e2e.yml@develop`） |
 | `pr-cleanup.yml` | PR を閉じたとき | PR 環境の削除（ECS のサービス・Cloud Map のサービス） |
 | `_build.yml` | 呼ばれる側 | `check`（`npm run check`・`npm run build`）→ `image`（Dockerfile で arm64 のイメージを作って push。タグを返す） |
-| `main.yml` | main へのマージ | `_build`（タグは `main-<ハッシュ>`）→ `_deploy`（`stg`、`stg-api` を呼ぶ）。AWS は Stg（Secrets の `AWS_ROLE_ARN_STG`）。E2E は e2e の stg 対応の後に足す |
+| `main.yml` | main へのマージ | `_build`（タグは `main-<ハッシュ>`）→ `_deploy`（`stg`、`stg-api` を呼ぶ）→ `e2e`（`stg`。e2e の `e2e.yml@main`）。AWS は Stg（Secrets の `AWS_ROLE_ARN_STG`） |
 | `sync-develop.yml` | main へのマージ | develop を main まで早送りし、履歴をそろえる（GitHub App `yosing-global-sync-develop` のトークンで push。develop に main に無いコミットがあれば警告だけ）。この push では `develop.yml` を動かさない（`build` の `if`）。develop → main の PR は「マージコミット」でマージする（スカッシュ・リベースだと早送りできない） |
 | `_deploy.yml` | 呼ばれる側 | 1つの環境（入力：`app_env`・`api_env`・`image_tag`）への `deploy` → `verify`（確認用のタスクで `http://<env>-web.sandbox.internal:8080/api/health` が `UP` になるまで待つ） |
 
