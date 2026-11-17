@@ -2,15 +2,16 @@
 
 sandbox の web（画面と BFF）のリポジトリ。Next.js（TypeScript）。sandbox は個人の学習とポートフォリオを兼ねたプロダクトで、最初の範囲は TOTP 認証（登録・ログイン）と、認証後のダッシュボード・ログアウトだけ。バックエンドの API は `yosing-sandbox-api`（Spring Boot）。
 
-## 状況（2026-11-07 時点）
+## 状況（2026-11-15 時点）
 
 - Next.js の土台ができた（2026-11-07。ヘルスチェック・静的チェック・単体テスト・Dockerfile）。CI・デプロイ（`.github/workflows`・`deploy/`）を作った（2026-11-09。最初の PR で動作を確かめる）。画面・BFF の土台（shadcn/ui・Storybook・Zod・pino、層の骨組みと ESLint の制限、API の呼び出しの共通部分）を作った（2026-11-09）。新規登録の画面（`/register`・`/register/setup`）を作った（2026-11-09）。ログインの画面（`/login`・`/login/verify`）を作った（2026-11-09）。ダッシュボード（`/dashboard`）・ログアウトと、proxy（`src/proxy.ts`。ログイン状態の振り分け・セッションの延長）を作った（2026-11-10。機能・設定のメニューは仮置きで、画面が無いためリンクにしていない）。エラーの画面（500・404）を作った（2026-11-10）。最初の範囲の画面は、これですべて。
 - E2E の設計は Notion の「6. テスト仕様」の「yosing-sandbox-e2e E2Eテスト」。
 - API は全部のエンドポイントができている（`yosing-sandbox-api`。仕様はその GitHub Wiki と Notion の「4.3 API設計」）。
 - 画面の URL と BFF の操作は、Notion の「4.2 画面のURLとBFF」で決めた（2026-11-09）。要点は下の「画面の URL と BFF」。
 - 画面の UI/UX は、Claude Code がキャンバス（claude.ai の Artifact「ログイン画面レイアウト案」 https://claude.ai/artifact/QHTRJ4g4wXWgbEoMo3GGEn ）に描いて決めた（2026-11-07）。要点は下の「画面（UI/UX）」。結果は Notion の「4.1 UI/UX設計」にも残す。
-- nonprod のインフラ（ECR の `sandbox/web`、CI ロール、タスクロール、SG、ロググループ）は準備済み。stg / prod のインフラはまだ無い（最後にまとめて作る）。
-- 作業の順番：web → E2E（`yosing-sandbox-e2e`、Playwright）→ stg / prod のインフラと各アプリの CI の仕上げ。リポジトリ・Wiki の一般公開は、全部を確かめた後の最後。
+- インフラは nonprod・stg・prod とも準備済み（`aws-infra-env`。2026-11-15）。CI は、PR → PR 環境、develop → dev・test、main → stg（E2E まで）、手動の `prod.yml` → prod まで動く（下の「環境」「CI・デプロイ」）。
+- E2E（`yosing-sandbox-e2e`、Playwright）は、web の PR 環境・test・stg で流す（prod には流さない）。
+- 残り：Notion の設計の更新、リポジトリ・Wiki の一般公開（全部を確かめた後の最後）。
 
 ## 技術
 
@@ -217,12 +218,12 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 - nonprod の URL は `https://<env>.local.sandbox.yosing.net:8090`（api は `https://<env>.api.local.sandbox.yosing.net:8090`）。SSM のポートフォワーディング（手元の 8090 → リバースプロキシの 443）でつなぐ。手順は `../aws-infra-env/README.md`（API の Wiki の「環境別接続手順」にも同じ手順）。
 - `/healthz` はリバースプロキシ（NGINX）が先に応答するため、web のヘルスチェックは `/api/health`（`{"status":"UP"}`。API には問い合わせない）。
 - nonprod のタスクは、使うときに `aws-infra-env` の `start.yml`（`nonprod`）で起動し、毎日 3:00（JST）に `stop.yml` で止まる（PR 環境も含む。2026-11-14 に、9:00〜翌 1:00 のスケジュールから変えた）。デプロイしたサービスは、止めていても起動する。
-- stg / prod の公開の入口は CloudFront ＋ 外部 ALB ＋ WAF（送信元ごとのレート制限は WAF で行う）。作るのは最後。
-- **prod は、ふだんは消しておく**（公開しない前提）。そのあいだは、メンテナンスのページを出す（2026-11-07 に決めた方針。作るのは stg / prod のインフラのとき）。
-  - ずっと残すもの：Route 53 のレコード・CloudFront・S3（メンテナンスの HTML）・ACM の証明書（us-east-1）。prod の本体（外部 ALB・ECS・WAF 等）とは別の state に置く（例：`aws-infra-env` の `products/sandbox/prod-edge`）。
-  - 切り替え：Terraform の変数（例：`prod_enabled`）で CloudFront の行き先を変える。`false` は、すべてのパスを S3 の `maintenance.html` に向け、503（`Retry-After` 付き）で返す。`true` は ALB に向け、ALB の 502・503・504 のときだけ同じメンテナンスのページを出す。CloudFront のオリジンフェイルオーバーは使わない（POST に効かず、消した ALB を参照し続けるため）。
-  - prod を作るときの順番：本体を作る → 確かめる → 行き先を ALB にする（CloudFront の反映に数分かかる）。メンテナンス中は WAF を外してよい。
-  - メンテナンスのページは Next.js ではなく、1枚の静的な HTML（見た目はキャンバスの「メンテナンス中」）。Terraform で S3 に置く（本リポジトリでは Terraform を使わないため、`aws-infra-env` に置く）。
+- stg / prod の公開の入口は CloudFront ＋ 外部 ALB ＋ WAF（送信元ごとのレート制限は WAF で行う）。URL は stg が `https://stg.sandbox.yosing.net`（Basic 認証あり。ID・パスワードは Stg の SSM の `/products/sandbox/basic-auth/*`）、prod が `https://sandbox.yosing.net`。
+  - CloudFront：`/_next/static/*` は S3（デプロイのときに、イメージから取り出して置く）、それ以外は ALB → web（キャッシュしない）。
+  - オリジンに送る Host は `origin.<ドメイン>` に置き換わるため、CloudFront Function が `X-Forwarded-Host` に利用者が開いたホスト名を入れる（Server Action の `Origin` の確認を通すため。2026-11-15 に stg の E2E で見つけた）。
+- **stg / prod は、ふだんは止めておく**（当面は公開しない）。使うときに `aws-infra-env` の `start.yml` で起動し、`stop.yml`（手動、および毎日 3:00 JST）で止める。止めている間は ALB が無い。
+  - 止めている間と、起動中に web が応答しないとき（オリジンが 502・503・504）は、CloudFront がメンテナンス中のページを 503 で返す（2026-11-15。前の方針の、変数 `prod_enabled` での切り替え・別の state は採らなかった）。
+  - メンテナンス中のページは Next.js ではなく、1枚の静的な HTML（文言・見た目は Notion の「4.1 UI/UX設計」）。web が動いていなくても出せるよう、`aws-infra-env` の `products/sandbox/modules/edge/maintenance.html` に置き、Terraform で S3 に上げる。文言を変えるときは、そちらを直す。
 
 ## CI・デプロイ（api と同じ作り）
 
@@ -254,7 +255,7 @@ Notion の「2. 方式設計」「4. 外部設計（共通方針）」「4.1 UI/
 - E2E（2026-11-12 に `pr.yml`、2026-11-13 に `develop.yml` に足した）：
   - 呼ぶ E2E の版は、その環境にデプロイされている web の版に合わせる。PR 環境・dev・test は `@develop`、stg は `@main`（e2e も develop と main で運用する）。入力の `e2e_ref` も `uses` の `@` の後ろと同じにする。
   - test は api の CI もデプロイ・E2E を流すが、web と api の間で排他しない（2026-11-13 に決定。理由は e2e の CLAUDE.md・Notion の方式設計の 2.5.2）。相手のデプロイと重なって E2E が落ちたら、やり直す（自動のやり直し1回、それでも落ちたら手で Re-run）。
-  - e2e は一般公開まで非公開のため、e2e を読む GitHub App のトークンで取ってくる。Variables に `E2E_APP_CLIENT_ID`、Secrets に `E2E_APP_PRIVATE_KEY`。e2e を一般公開したら、`pr.yml`・`develop.yml` の App の2行と、この2つを消す。
+  - e2e は公開リポジトリのため、呼ぶ側のトークンでそのまま取ってくる（2026-11-17 に公開。それまで使っていた e2e を読む GitHub App の入力は削除した）。
   - 文言・部品の名前を変える PR は、e2e の develop を先に直す（PR 環境の E2E は e2e の develop で流れるため）。e2e の PR と、PR の「他リポジトリ・手作業」で紐づける。
   - 失敗したときの HTML のレポート（トレース・スクリーンショット）は、この PR の Actions の成果物 `e2e-report-<環境>-<試行の回数>` に7日残る。
 - タスク定義の環境変数：`APP_ENV`（`dev` / `test` / `pr<番号>`）、`API_BASE_URL`（`http://<API_ENV>-api.sandbox.internal:8080`。`API_ENV` は dev / test、PR 環境は dev）。web のタスクロールはアプリの環境で共有するため、api の `ROLE_ENV` に当たるものは無い。
