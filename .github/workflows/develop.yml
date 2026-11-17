@@ -67,7 +67,5 @@ jobs:
     with:
       app_env: test
       e2e_ref: develop
-      e2e_app_client_id: ${{ vars.E2E_APP_CLIENT_ID }}
     secrets:
       aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}
-      e2e_app_private_key: ${{ secrets.E2E_APP_PRIVATE_KEY }}
